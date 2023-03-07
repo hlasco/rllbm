@@ -1,0 +1,8 @@
+jaxlib
+jax
+numpy
+tqdm
+rich
+netCDF4
+xarray
+plotly
