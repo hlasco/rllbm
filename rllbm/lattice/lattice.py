@@ -1,21 +1,22 @@
-from dataclasses import dataclass
-
-import jax.numpy as jnp
+from functools import partial
+import string
 
 from jax import jit, Array
+import jax.numpy as jnp
 from jax.typing import ArrayLike
 
-from functools import partial
+
 
 class Lattice:
     """_summary_
     """
     def __init__(
         self,
-        name: str,
-        dim: int,
         coords: ArrayLike,
         weights: ArrayLike,
+        name: str,
+        dim: int,
+        **kwargs,
     ):
         """_summary_
 
@@ -35,27 +36,34 @@ class Lattice:
 
         self.opposite_indices = _get_opposite_indices(self.coords)
 
+    @partial(jit, static_argnums=2)
     def get_moment(self, dist_function, order):
-        return _get_moment(dist_function, order)
+        """_summary_
 
-@partial(jit, static_argnums=0)
-def _get_moment(
-    dist_function: ArrayLike,
-    order: int,
-) -> Array:
-    """_summary_
+        Args:
+            dist_function (_type_): _description_
+            order (_type_): _description_
 
-    Args:
-        dist_function (ArrayLike): _description_
-        order (int): _description_
-
-    Returns:
-        Array: _description_
-    """
-    einsum_litteral = "NMQ" + order*",dQ" + "->NM" + order*"d"
-    args = [coords] * order
-
-    return jnp.einsum(einsum_litteral, dist_function, *args)
+        Returns:
+            _type_: _description_
+        """
+        lowercase = string.ascii_lowercase
+        coord_litteral = "".join([f",{lowercase[i%26]}Q" for i in range(order)])
+        output_litteral = "".join([f"{lowercase[i%26]}" for i in range(order)])
+        
+        einsum_litteral = "NMQ" + coord_litteral + "->NM" + output_litteral
+        
+        args = [self.coords] * order
+        return jnp.einsum(einsum_litteral, dist_function, *args)
+    
+    def _tree_flatten(self):
+        children = (self.coords, self.weights)  # arrays / dynamic values
+        aux_data = {'name': self.name, 'dim': self.dim, 'size': self.size}  # static values
+        return (children, aux_data)
+    
+    @classmethod
+    def _tree_unflatten(cls, aux_data, children):
+        return cls(*children, **aux_data)
 
 def _get_opposite_indices(
         coords: ArrayLike

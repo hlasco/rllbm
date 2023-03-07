@@ -1,4 +1,4 @@
-from .lattice import Lattice
+from rllbm.lattice import Lattice
 import jax.numpy as jnp
 
 class D2Q9(Lattice):
@@ -19,11 +19,14 @@ class D2Q9(Lattice):
                 [ 0, 1, 0, -1,  0, 1, -1, -1,  1,],
                 [ 0, 0, 1,  0, -1, 1,  1, -1, -1,],
             ],
-            dtype = jnp.int8
         )
 
         weights = jnp.array(
             [4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36,]
         )
 
-        super().__init__(name, dim, coords, weights)
+        super().__init__(name=name, dim=dim, coords=coords, weights=weights)
+        
+    @classmethod
+    def _tree_unflatten(cls, *args):
+        return cls()

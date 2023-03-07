@@ -6,3 +6,4 @@ rich
 netCDF4
 xarray
 plotly
+pytest

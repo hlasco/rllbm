@@ -21,6 +21,6 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=required,
-    packages=setuptools.find_namespace_packages(include = ["rllbm"]),
+    packages=setuptools.find_namespace_packages(include = ["rllbm", "rllbm.*"]),
     python_requires=">=3.8",
 )
