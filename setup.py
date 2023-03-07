@@ -14,7 +14,7 @@ setuptools.setup(
     description="A playground for training RL agents to interact with fluid simulations.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/hlasco/rl_lbm",
+    url="https://github.com/hlasco/rllbm",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
