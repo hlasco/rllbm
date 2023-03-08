@@ -19,13 +19,29 @@ class D2Q9(Lattice):
                 [ 0, 1, 0, -1,  0, 1, -1, -1,  1,],
                 [ 0, 0, 1,  0, -1, 1,  1, -1, -1,],
             ],
+            dtype=jnp.int32,
+        )
+        
+        opposite_indices = jnp.array(
+            [
+                0, 3, 4, 1, 2, 7, 8, 5, 6,
+            ],
+            dtype=jnp.int32,
         )
 
         weights = jnp.array(
-            [4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36,]
+            [
+                4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36,
+            ]
         )
 
-        super().__init__(name=name, dim=dim, coords=coords, weights=weights)
+        super().__init__(
+            coords,
+            weights,
+            opposite_indices,
+            name,
+            dim
+        )
         
     @classmethod
     def _tree_unflatten(cls, *args):

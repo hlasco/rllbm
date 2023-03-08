@@ -1,23 +1,20 @@
 
 
+from rllbm.lattice import D2Q5, D2Q9
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import cmasher as cmr
-from tqdm import tqdm
+from tqdm.rich import trange
 import numpy as np
 import netCDF4
 
-
-
-N_POINTS_Y = 512
-N_POINTS_X = N_POINTS_Y
-DX = 1 / (N_POINTS_Y - 2.0)
+N_POINTS_Y = 128
+N_POINTS_X = 128
+DX = 1 / (N_POINTS_Y - 1.0)
 
 
 PR = 0.71
-RA = 1e9
+RA = 1e8
 GR = 0.0001
 BUOYANCY = jnp.array([0, GR])
 
@@ -26,7 +23,6 @@ TCOLD = -0.5
 T0 = 0.5 * (THOT + TCOLD)
 
 DT = (GR * DX)**0.5
-print(DT)
 NU = (PR / RA)**0.5*DT/(DX*DX)
 K = (1.0 / (PR * RA))**0.5*DT/(DX*DX)
 
@@ -39,70 +35,8 @@ PLOT_EVERY_N_STEPS = int(0.1 / DT)
 N_ITERATIONS = int(40 / DT)
 SKIP_FIRST_N_ITERATIONS = 0
 
-r"""
-LBM Grid: D2Q9
-    6   2   5
-      \ | /
-    3 - 0 - 1
-      / | \
-    7   4   8 
-"""
-
-N_DISCRETE_VELOCITIES = 9
-
-D2Q9_VELOCITIES = jnp.array([
-    [ 0,  1,  0, -1,  0,  1, -1, -1,  1,],
-    [ 0,  0,  1,  0, -1,  1,  1, -1, -1,]
-])
-
-D2Q9_INDICES = jnp.array([
-    0, 1, 2, 3, 4, 5, 6, 7, 8,
-])
-
-OPPOSITE_D2Q9INDICES = jnp.array([
-    0, 3, 4, 1, 2, 7, 8, 5, 6,
-])
-
-D2Q9_WEIGHTS = jnp.array([
-    4/9,                        # Center Velocity [0,]
-    1/9,  1/9,  1/9,  1/9,      # Axis-Aligned Velocities [1, 2, 3, 4]
-    1/36, 1/36, 1/36, 1/36,     # 45 ° Velocities [5, 6, 7, 8]
-])
-
-RIGHT_VELOCITIES = jnp.array([1, 5, 8])
-UP_VELOCITIES = jnp.array([2, 5, 6])
-LEFT_VELOCITIES = jnp.array([3, 6, 7])
-DOWN_VELOCITIES = jnp.array([4, 7, 8])
-PURE_VERTICAL_VELOCITIES = jnp.array([0, 2, 4])
-PURE_HORIZONTAL_VELOCITIES = jnp.array([0, 1, 3])
-
-r"""
-LBM Grid: D2Q5
-        2
-        |
-    3 - 0 - 1
-        |
-        4 
-"""
-
-N_DISCRETE_TEMPERATURE = 5
-
-D2Q5_TEMPERATURE = jnp.array([
-    [ 0,  1,  0, -1,  0,],
-    [ 0,  0,  1,  0, -1,]
-])
-
-D2Q5_INDICES = jnp.array([
-    0, 1, 2, 3, 4,
-])
-
-OPPOSITE_D2Q5INDICES = jnp.array([
-    0, 3, 4, 1, 2,
-])
-
-D2Q5_WEIGHTS = jnp.array([
-    1/3, 1/6, 1/6, 1/6, 1/6,
-])
+d2q5 = D2Q5()
+d2q9 = D2Q9()
 
 def get_density(discrete):
     density = jnp.sum(discrete, axis=-1)
@@ -137,19 +71,21 @@ def main():
     
     X, Y = jnp.meshgrid(x, y, indexing="ij")
 
-    T_ini = TCOLD + (THOT-TCOLD) * (1-Y)
-    fIn = jnp.ones((N_POINTS_X, N_POINTS_Y, N_DISCRETE_VELOCITIES))
-    fIn = fIn * D2Q9_WEIGHTS[jnp.newaxis, jnp.newaxis, :]
+    T_ini = TCOLD + (THOT-TCOLD) * (1-Y) #* (X-1)*X
+    fIn = jnp.ones((N_POINTS_X, N_POINTS_Y, d2q9.size))
+    fIn = fIn * d2q9.weights[jnp.newaxis, jnp.newaxis, :]
     
-    tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, N_DISCRETE_TEMPERATURE))+ (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X,N_POINTS_Y,5)-0.05)
-    T_bottom = THOT + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X)-0.05) #* jnp.exp(-((x-1)/2)**2) * jnp.sin(x/xmax * jnp.pi)/5
+    tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, d2q5.size)) + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X,N_POINTS_Y,5)-0.05)
+    #T_bottom = THOT + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X)-0.05) #* jnp.exp(-((x-1)/2)**2) * jnp.sin(x/xmax * jnp.pi)/5
     #T_bottom = THOT + jnp.exp(-((x-0.5)/10)**2) * jnp.sin(x/xmax * jnp.pi) * 0
-    #T_bottom = T_ini[:,0]
+    T_bottom = THOT * jnp.ones(N_POINTS_X)
+    T_top = TCOLD * jnp.ones(N_POINTS_X)
     tIn = tIn.at[:, 0, :].set(T_bottom[:, jnp.newaxis])
+    tIn = tIn.at[:, -1, :].set(T_top[:, jnp.newaxis])
     #tIn = tIn.at[:, 0, :].set(THOT)
     #tIn = tIn.at[:, :, :].set(T_ini[...,jnp.newaxis] + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X,N_POINTS_Y,5)-0.05))
     #tIn = tIn.at[N_POINTS_X//2, 1, :].set(THOT + THOT/10.0)
-    tIn = tIn * D2Q5_WEIGHTS[jnp.newaxis, jnp.newaxis, :]
+    tIn = tIn * d2q5.weights[jnp.newaxis, jnp.newaxis, :]
     
     tracer = jnp.array([1.0, 0.5])
     dt = DT
@@ -158,18 +94,11 @@ def main():
     def update(fIn, tIn, time, tracer, dt):
         
         # (2) Macroscopic Velocities
-        rho = get_density(fIn)
-        T = get_density(tIn)
+        rho = d2q9.get_moment(fIn, 0)
+        T = d2q5.get_moment(tIn, 0)
         
-        uf = get_macroscopic(fIn, rho, D2Q9_VELOCITIES,)
-        
-        dt = 0.05 * DX / (jnp.abs(uf).max() + 0.1)
-        
-        NU = (PR / RA)**0.5*dt/(DX*DX)
-        K = (1.0 / (PR * RA))**0.5*dt/(DX*DX)
-        
-        OMEGANS = 1. / (3 * NU + 0.5); # Relaxation parameter for fluid
-        OMEGAT  = 1. / (3. * K + 0.5); # Relaxation parameter for temperature
+        uf = d2q9.get_moment(fIn, 1) / rho[..., jnp.newaxis]
+
         
         idx, idy = jnp.floor(tracer[0] / DX), jnp.floor(tracer[1] / DX)
         
@@ -181,7 +110,7 @@ def main():
         
         test = jnp.einsum(
             "dQ, d->Q",
-            D2Q9_VELOCITIES,
+            d2q9.coords,
             BUOYANCY,
         )
         
@@ -189,29 +118,29 @@ def main():
         
         cuNS = 3*jnp.einsum(
             "dQ, NMd->NMQ",
-            D2Q9_VELOCITIES,
+            d2q9.coords,
             uf,
         )
         
         fEq =  (
-            rho[..., jnp.newaxis] * D2Q9_WEIGHTS[jnp.newaxis, jnp.newaxis, :] * (
+            rho[..., jnp.newaxis] * d2q9.weights[jnp.newaxis, jnp.newaxis, :] * (
                 1 + cuNS + 1/2 * cuNS**2 - 3/2 * u_norm[..., jnp.newaxis]**2
             )
         )
         force = (
-            3 * rho[..., jnp.newaxis] * D2Q9_WEIGHTS[jnp.newaxis, jnp.newaxis, :] * (
+            3 * rho[..., jnp.newaxis] * d2q9.weights[jnp.newaxis, jnp.newaxis, :] * (
                 (T - T0)[..., jnp.newaxis] * test[jnp.newaxis, jnp.newaxis, :] / (THOT - TCOLD)
             )
         )
         
         cu = 3*jnp.einsum(
             "dQ, NMd->NMQ",
-            D2Q5_TEMPERATURE,
+            d2q5.coords,
             uf,
         )
         
         tEq = (
-            T[..., jnp.newaxis] * D2Q5_WEIGHTS[jnp.newaxis, jnp.newaxis, :] * (
+            T[..., jnp.newaxis] * d2q5.weights[jnp.newaxis, jnp.newaxis, :] * (
                 1 + cu
             )
         )
@@ -220,47 +149,55 @@ def main():
         tOut = tIn - OMEGAT * (tIn-tEq)
         
         
-        for i in range(N_DISCRETE_VELOCITIES):
-            fOut = fOut.at[:, 0, i].set(fIn[:, 0, OPPOSITE_D2Q9INDICES[i]])
-            fOut = fOut.at[:, N_POINTS_Y, i].set(fIn[:, N_POINTS_Y, OPPOSITE_D2Q9INDICES[i]])
+        for i in range(d2q9.size):
+            fOut = fOut.at[:, 0, i].set(fIn[:, 0, d2q9.opposite_indices[i]])
+            fOut = fOut.at[:, N_POINTS_Y, i].set(fIn[:, N_POINTS_Y,  d2q9.opposite_indices[i]])
+            fOut = fOut.at[N_POINTS_X, :, i].set(fIn[N_POINTS_X, :,  d2q9.opposite_indices[i]])
+            fOut = fOut.at[0, :, i].set(fIn[0, :,  d2q9.opposite_indices[i]])
+            
+        for i in range(d2q5.size):
+            tOut = tOut.at[N_POINTS_X, :, i].set(tIn[N_POINTS_X, :,  d2q5.opposite_indices[i]])
+            tOut = tOut.at[0, :, i].set(tIn[0, :,  d2q5.opposite_indices[i]])
         
-        for i in range(N_DISCRETE_VELOCITIES):
+        for i in range(d2q9.size):
             fOut = fOut.at[:, :, i].set(
                 jnp.roll(
                     jnp.roll(
                         fOut[:, :, i],
-                        D2Q9_VELOCITIES[0, i],
+                        d2q9.coords[0, i],
                         axis=0,
                     ),
-                    D2Q9_VELOCITIES[1, i],
+                    d2q9.coords[1, i],
                     axis=1,
                 )
             )
             
-        for i in range(N_DISCRETE_TEMPERATURE):
+        for i in range(d2q5.size):
             tOut = tOut.at[:,:, i].set(
                 jnp.roll(
                     jnp.roll(
                         tOut[:, :, i],
-                        D2Q5_TEMPERATURE[0, i],
+                        d2q5.coords[0, i],
                         axis=0,
                     ),
-                    D2Q5_TEMPERATURE[1, i],
+                    d2q5.coords[1, i],
                     axis=1,
                 )
             )
 
         tOut_ = jnp.copy(tOut)
-        tOut = tOut.at[:,-1, 2].set(
-            TCOLD - tOut_[:,-1,0] - tOut_[:,-1,1] - tOut_[:,-1,3] - tOut_[:,-1,4]
+        tOut = tOut.at[:,-1,2].set(
+            T_top - tOut_[:,-1,0] - tOut_[:,-1,1] - tOut_[:,-1,3] - tOut_[:,-1,4]
         )
         
-        tOut = tOut.at[:,0, 4].set(
-            T_bottom - tOut_[:,0,0]-tOut_[:,0,1]-tOut_[:,0,2]-tOut_[:,0,3]
+        tOut = tOut.at[:,0,4].set(
+            T_bottom - tOut_[:,0,0] - tOut_[:,0,1] - tOut_[:,0,2] - tOut_[:,0,3]
         )
 
         fIn = fOut
         tIn = tOut
+        
+        
         return fIn, tIn, time, tracer, dt
 
     #plt.style.use("dark_background")
@@ -272,7 +209,7 @@ def main():
     with netCDF4.Dataset("outputs_1.nc", "w", format='NETCDF4_CLASSIC') as f:
         f.createDimension('nx', N_POINTS_X)
         f.createDimension('ny', N_POINTS_Y)
-        time_dim = f.createDimension('time', None)
+        f.createDimension('time', None)
         
         f.createVariable('t', 'f4', 'time')
         f.createVariable('x', 'f4', 'nx')[:] = x
@@ -283,7 +220,7 @@ def main():
         f.createVariable('uy', 'f4', ('time', 'nx', 'ny'))
         
         
-    for iteration_index in tqdm(range(N_ITERATIONS)):
+    for iteration_index in trange(N_ITERATIONS):
         
         if iteration_index%PLOT_EVERY_N_STEPS == 0:
             tracers.append(tracer)
@@ -291,10 +228,10 @@ def main():
             rho = get_density(fIn)
             T = get_density(tIn)
             
-            u = get_macroscopic(fIn, rho, D2Q9_VELOCITIES,)
+            u = get_macroscopic(fIn, rho, d2q9.coords,)
             
             x_0 = 0.5*xmax * jnp.sin(time/10*np.pi)
-            print(jnp.abs(u).max(), dt, x_0)
+            #(jnp.abs(u).max(), dt, x_0)
             with netCDF4.Dataset("outputs_1.nc", "a", format='NETCDF4_CLASSIC') as f:
                 nctime = f.variables['t']
                 nctime[k] = time

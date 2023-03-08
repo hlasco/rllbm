@@ -20,6 +20,12 @@ class D2Q5(Lattice):
                 [ 0,  0,  1,  0, -1,],
             ],
         )
+        
+        opposite_indices = jnp.array(
+            [
+                0, 3, 4, 1, 2,
+            ],
+        )
 
         weights = jnp.array(
             [
@@ -27,7 +33,13 @@ class D2Q5(Lattice):
             ]
         )
 
-        super().__init__(name=name, dim=dim, coords=coords, weights=weights)
+        super().__init__(
+            coords,
+            weights,
+            opposite_indices,
+            name,
+            dim
+        )
         
     @classmethod
     def _tree_unflatten(cls, *args):

@@ -14,6 +14,7 @@ class Lattice:
         self,
         coords: ArrayLike,
         weights: ArrayLike,
+        opposite_indices: ArrayLike,
         name: str,
         dim: int,
         **kwargs,
@@ -29,12 +30,11 @@ class Lattice:
         self.name = name
         self.coords = coords
         self.weights = weights
+        self.opposite_indices = opposite_indices
 
         self.dim, self.size = self.coords.shape
 
         assert dim == self.dim, f"Expected coordinates with dimension {dim}, got: {self.dim}"
-
-        self.opposite_indices = _get_opposite_indices(self.coords)
 
     @partial(jit, static_argnums=2)
     def get_moment(self, dist_function, order):
@@ -57,33 +57,18 @@ class Lattice:
         return jnp.einsum(einsum_litteral, dist_function, *args)
     
     def _tree_flatten(self):
-        children = (self.coords, self.weights)  # arrays / dynamic values
-        aux_data = {'name': self.name, 'dim': self.dim, 'size': self.size}  # static values
+        children = (
+            self.coords,
+            self.weights,
+            self.opposite_indices,
+        )
+        aux_data = {
+            'name': self.name,
+            'dim': self.dim,
+            'size': self.size,
+        }
         return (children, aux_data)
     
     @classmethod
     def _tree_unflatten(cls, aux_data, children):
         return cls(*children, **aux_data)
-
-def _get_opposite_indices(
-        coords: ArrayLike
-    ) -> Array:
-    """_summary_
-
-    Args:
-        coords (ArrayLike): _description_
-
-    Returns:
-        Array: _description_
-    """
-    dim, size = coords.shape
-
-    identity = jnp.eye(dim)
-    indices = jnp.empty(size)
-
-    for i, direction in enumerate(coords.T):
-        opposite_direction = - jnp.dot(identity, direction)
-        index_match = jnp.prod(coords.T == opposite_direction[jnp.newaxis, :], axis=1)
-        indices = indices.at[i].set(jnp.argwhere(index_match, size=1).squeeze())
-
-    return indices
