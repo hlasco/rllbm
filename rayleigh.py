@@ -1,7 +1,6 @@
 
 
-from rllbm.lattice import D2Q5, D2Q9
-
+from rllbm.lattice import D2Q5, D2Q9, stream, collide
 import jax
 import jax.numpy as jnp
 from tqdm.rich import trange
@@ -95,59 +94,15 @@ def main():
         
         # (2) Macroscopic Velocities
         rho = d2q9.get_moment(fIn, 0)
-        T = d2q5.get_moment(tIn, 0)
-        
         uf = d2q9.get_moment(fIn, 1) / rho[..., jnp.newaxis]
-
-        
         idx, idy = jnp.floor(tracer[0] / DX), jnp.floor(tracer[1] / DX)
-        
         tracer += uf[idx.astype(int)%N_POINTS_X, idy.astype(int)%N_POINTS_Y, :] * dt
         
         time += dt
         x_0 = 0.5#*xmax * jnp.sin(time/10*np.pi)
         #T_bottom = THOT + 2*jnp.exp(-((x-0.5-x_0)/10)**2) * jnp.sin(x/xmax * jnp.pi)
-        
-        test = jnp.einsum(
-            "dQ, d->Q",
-            d2q9.coords,
-            BUOYANCY,
-        )
-        
-        u_norm = jnp.linalg.norm(uf, axis=-1, ord=2,)
-        
-        cuNS = 3*jnp.einsum(
-            "dQ, NMd->NMQ",
-            d2q9.coords,
-            uf,
-        )
-        
-        fEq =  (
-            rho[..., jnp.newaxis] * d2q9.weights[jnp.newaxis, jnp.newaxis, :] * (
-                1 + cuNS + 1/2 * cuNS**2 - 3/2 * u_norm[..., jnp.newaxis]**2
-            )
-        )
-        force = (
-            3 * rho[..., jnp.newaxis] * d2q9.weights[jnp.newaxis, jnp.newaxis, :] * (
-                (T - T0)[..., jnp.newaxis] * test[jnp.newaxis, jnp.newaxis, :] / (THOT - TCOLD)
-            )
-        )
-        
-        cu = 3*jnp.einsum(
-            "dQ, NMd->NMQ",
-            d2q5.coords,
-            uf,
-        )
-        
-        tEq = (
-            T[..., jnp.newaxis] * d2q5.weights[jnp.newaxis, jnp.newaxis, :] * (
-                1 + cu
-            )
-        )
-        
-        fOut = fIn - OMEGANS * (fIn-fEq) + force
-        tOut = tIn - OMEGAT * (tIn-tEq)
-        
+
+        fOut, tOut = collide(fIn, d2q9, OMEGANS, tIn, d2q5, OMEGAT, BUOYANCY)
         
         for i in range(d2q9.size):
             fOut = fOut.at[:, 0, i].set(fIn[:, 0, d2q9.opposite_indices[i]])
@@ -158,40 +113,16 @@ def main():
         for i in range(d2q5.size):
             tOut = tOut.at[N_POINTS_X, :, i].set(tIn[N_POINTS_X, :,  d2q5.opposite_indices[i]])
             tOut = tOut.at[0, :, i].set(tIn[0, :,  d2q5.opposite_indices[i]])
-        
-        for i in range(d2q9.size):
-            fOut = fOut.at[:, :, i].set(
-                jnp.roll(
-                    jnp.roll(
-                        fOut[:, :, i],
-                        d2q9.coords[0, i],
-                        axis=0,
-                    ),
-                    d2q9.coords[1, i],
-                    axis=1,
-                )
-            )
             
-        for i in range(d2q5.size):
-            tOut = tOut.at[:,:, i].set(
-                jnp.roll(
-                    jnp.roll(
-                        tOut[:, :, i],
-                        d2q5.coords[0, i],
-                        axis=0,
-                    ),
-                    d2q5.coords[1, i],
-                    axis=1,
-                )
-            )
-
-        tOut_ = jnp.copy(tOut)
+        fOut = stream(fOut, d2q9)
+        tOut = stream(tOut, d2q5)
+        
         tOut = tOut.at[:,-1,2].set(
-            T_top - tOut_[:,-1,0] - tOut_[:,-1,1] - tOut_[:,-1,3] - tOut_[:,-1,4]
+            T_top - tOut[:,-1,0] - tOut[:,-1,1] - tOut[:,-1,3] - tOut[:,-1,4]
         )
         
         tOut = tOut.at[:,0,4].set(
-            T_bottom - tOut_[:,0,0] - tOut_[:,0,1] - tOut_[:,0,2] - tOut_[:,0,3]
+            T_bottom - tOut[:,0,0] - tOut[:,0,1] - tOut[:,0,2] - tOut[:,0,3]
         )
 
         fIn = fOut

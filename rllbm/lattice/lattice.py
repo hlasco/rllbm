@@ -36,7 +36,6 @@ class Lattice:
 
         assert dim == self.dim, f"Expected coordinates with dimension {dim}, got: {self.dim}"
 
-    @partial(jit, static_argnums=2)
     def get_moment(self, dist_function, order):
         """_summary_
 
