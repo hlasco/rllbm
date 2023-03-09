@@ -40,7 +40,3 @@ class D2Q5(Lattice):
             name,
             dim
         )
-        
-    @classmethod
-    def _tree_unflatten(cls, *args):
-        return cls()

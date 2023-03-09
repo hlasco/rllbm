@@ -54,20 +54,3 @@ class Lattice:
         
         args = [self.coords] * order
         return jnp.einsum(einsum_litteral, dist_function, *args)
-    
-    def _tree_flatten(self):
-        children = (
-            self.coords,
-            self.weights,
-            self.opposite_indices,
-        )
-        aux_data = {
-            'name': self.name,
-            'dim': self.dim,
-            'size': self.size,
-        }
-        return (children, aux_data)
-    
-    @classmethod
-    def _tree_unflatten(cls, aux_data, children):
-        return cls(*children, **aux_data)

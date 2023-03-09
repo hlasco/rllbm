@@ -7,13 +7,13 @@ from tqdm.rich import trange
 import numpy as np
 import netCDF4
 
-N_POINTS_Y = 128
-N_POINTS_X = 128
+N_POINTS_Y = 256
+N_POINTS_X = 256
 DX = 1 / (N_POINTS_Y - 1.0)
 
 
 PR = 0.71
-RA = 1e8
+RA = 1e9
 GR = 0.0001
 BUOYANCY = jnp.array([0, GR])
 
@@ -74,7 +74,8 @@ def main():
     fIn = jnp.ones((N_POINTS_X, N_POINTS_Y, d2q9.size))
     fIn = fIn * d2q9.weights[jnp.newaxis, jnp.newaxis, :]
     
-    tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, d2q5.size)) + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X,N_POINTS_Y,5)-0.05)
+    tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, d2q5.size)) 
+    tIn = tIn.at[1:-1,1:-1,:].set((THOT-TCOLD) * (tIn[1:-1,1:-1,:] + 0.1*np.random.rand(N_POINTS_X-2,N_POINTS_Y-2,5)-0.05))
     #T_bottom = THOT + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X)-0.05) #* jnp.exp(-((x-1)/2)**2) * jnp.sin(x/xmax * jnp.pi)/5
     #T_bottom = THOT + jnp.exp(-((x-0.5)/10)**2) * jnp.sin(x/xmax * jnp.pi) * 0
     T_bottom = THOT * jnp.ones(N_POINTS_X)
@@ -101,8 +102,13 @@ def main():
         time += dt
         x_0 = 0.5#*xmax * jnp.sin(time/10*np.pi)
         #T_bottom = THOT + 2*jnp.exp(-((x-0.5-x_0)/10)**2) * jnp.sin(x/xmax * jnp.pi)
-
-        fOut, tOut = collide(fIn, d2q9, OMEGANS, tIn, d2q5, OMEGAT, BUOYANCY)
+        fOut = fIn
+        tOut = tIn
+            
+        fOut, tOut = collide(fOut, d2q9, OMEGANS, tOut, d2q5, OMEGAT, BUOYANCY)
+        
+        fOut = stream(fOut, d2q9)
+        tOut = stream(tOut, d2q5)
         
         for i in range(d2q9.size):
             fOut = fOut.at[:, 0, i].set(fIn[:, 0, d2q9.opposite_indices[i]])
@@ -113,16 +119,13 @@ def main():
         for i in range(d2q5.size):
             tOut = tOut.at[N_POINTS_X, :, i].set(tIn[N_POINTS_X, :,  d2q5.opposite_indices[i]])
             tOut = tOut.at[0, :, i].set(tIn[0, :,  d2q5.opposite_indices[i]])
-            
-        fOut = stream(fOut, d2q9)
-        tOut = stream(tOut, d2q5)
         
-        tOut = tOut.at[:,-1,2].set(
-            T_top - tOut[:,-1,0] - tOut[:,-1,1] - tOut[:,-1,3] - tOut[:,-1,4]
+        tOut = tOut.at[:,-1,4].set(
+            T_top - tOut[:,-1,0] - tOut[:,-1,1] - tOut[:,-1,3] - tOut[:,-1,2]
         )
         
-        tOut = tOut.at[:,0,4].set(
-            T_bottom - tOut[:,0,0] - tOut[:,0,1] - tOut[:,0,2] - tOut[:,0,3]
+        tOut = tOut.at[:,0,2].set(
+            T_bottom - tOut[:,0,0] - tOut[:,0,1] - tOut[:,0,4] - tOut[:,0,3]
         )
 
         fIn = fOut
@@ -156,12 +159,12 @@ def main():
         if iteration_index%PLOT_EVERY_N_STEPS == 0:
             tracers.append(tracer)
             k = iteration_index//PLOT_EVERY_N_STEPS
-            rho = get_density(fIn)
-            T = get_density(tIn)
+            rho = d2q9.get_moment(fIn, 0)
+            T = d2q9.get_moment(tIn, 0)
             
             u = get_macroscopic(fIn, rho, d2q9.coords,)
             
-            x_0 = 0.5*xmax * jnp.sin(time/10*np.pi)
+            #x_0 = 0.5*xmax * jnp.sin(time/10*np.pi)
             #(jnp.abs(u).max(), dt, x_0)
             with netCDF4.Dataset("outputs_1.nc", "a", format='NETCDF4_CLASSIC') as f:
                 nctime = f.variables['t']
@@ -174,9 +177,6 @@ def main():
                 ncuy[k,:,:] = u[:,:,1]
             
         fIn, tIn, time, tracer, dt = update(fIn, tIn, time, tracer, dt)
-    
-    #if VISUALIZE:
-    #    plt.show()
 
 
 
