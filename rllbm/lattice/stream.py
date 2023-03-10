@@ -12,15 +12,11 @@ def stream(dist_function, lattice):
         _type_: _description_
     """
     for i in range(lattice.size):
-        dist_function = dist_function.at[:, :, i].set(
+        dist_function = dist_function.at[..., i].set(
             jnp.roll(
-                jnp.roll(
-                    dist_function[:, :, i],
-                    lattice.coords[0, i],
-                    axis=0,
-                ),
-                lattice.coords[1, i],
-                axis=1,
+                a = dist_function[..., i],
+                shift = lattice.coords[:,i],
+                axis = [k for k in range(lattice.dim)]
             )
         )
     return dist_function

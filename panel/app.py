@@ -1,26 +1,28 @@
 import holoviews as hv
 import xarray as xr
 import panel as pn
+import numpy as np
 
 import datashader as ds
+from datashader import transfer_functions as tf
 
-df = xr.open_dataset('outputs_1.nc')
+df = xr.open_dataset('outputs_1.nc', chunks={'time': 16}).persist()
 
 renderer = hv.renderer('bokeh')
 
 stream = hv.streams.Stream.define('time', time=0)()
 
 def get_layout(time):
-    cvs = ds.Canvas(plot_width=128, plot_height=128)
-    img = hv.Image(cvs.raster(df.temp.isel(time=time).T))
-    curve = hv.Curve(df.temp.isel(time=time, ny=0))
+    cvs = ds.Canvas(plot_width=196, plot_height=196)
+    img = hv.Image(cvs.raster(df.isel(time=time).temp.T))
+    curve = hv.Curve(df.isel(time=time, ny=0).temp)
     layout = (img + curve).cols(1)
     return layout
 
 dmap = hv.DynamicMap(get_layout, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
-        clim=(-0.03, 0.03),
+        clim=(-0.04, 0.04),
         xlabel="",
         xticks=0,
         colorbar=True,
@@ -48,7 +50,7 @@ player = pn.widgets.Player(
 
 @pn.depends(time=player.param.value)
 def animate(time):
-    stream.event(time=value)
+    stream.event(time=time)
 
 app = pn.Column(
     dmap,
