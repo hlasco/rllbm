@@ -13,12 +13,12 @@ DX = 1 / (N_POINTS_Y - 1.0)
 
 
 PR = 0.71
-RA = 1e9
-GR = 0.0001
-BUOYANCY = jnp.array([0, GR])
+RA = 1e10
+GR = 0.005
+BUOYANCY = jnp.array([GR, 0.0])
 
-THOT = 0.5
-TCOLD = -0.5
+THOT = 0*0.5
+TCOLD = -0*0.5
 T0 = 0.5 * (THOT + TCOLD)
 
 DT = (GR * DX)**0.5
@@ -30,8 +30,8 @@ OMEGAT  = 1. / (3. * K + 0.5); # Relaxation parameter for temperature
 
 
 VISUALIZE = True
-PLOT_EVERY_N_STEPS = int(0.1 / DT)
-N_ITERATIONS = int(40 / DT)
+PLOT_EVERY_N_STEPS = int(1.0 / DT)
+N_ITERATIONS = int(2*180 / DT)
 SKIP_FIRST_N_ITERATIONS = 0
 
 d2q5 = D2Q5()
@@ -77,8 +77,8 @@ def main():
     tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, d2q5.size)) 
     tIn = tIn.at[1:-1,1:-1,:].set((THOT-TCOLD) * (tIn[1:-1,1:-1,:] + 0.1*np.random.rand(N_POINTS_X-2,N_POINTS_Y-2,5)-0.05))
     #T_bottom = THOT + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X)-0.05) #* jnp.exp(-((x-1)/2)**2) * jnp.sin(x/xmax * jnp.pi)/5
-    #T_bottom = THOT + jnp.exp(-((x-0.5)/10)**2) * jnp.sin(x/xmax * jnp.pi) * 0
-    T_bottom = THOT * jnp.ones(N_POINTS_X)
+    T_bottom = THOT + 0.5*jnp.exp(-((x-0.5)*10)**2) #* jnp.sin(x/xmax * jnp.pi)
+    #T_bottom = THOT * jnp.ones(N_POINTS_X)
     T_top = TCOLD * jnp.ones(N_POINTS_X)
     tIn = tIn.at[:, 0, :].set(T_bottom[:, jnp.newaxis])
     tIn = tIn.at[:, -1, :].set(T_top[:, jnp.newaxis])
@@ -100,8 +100,8 @@ def main():
         tracer += uf[idx.astype(int)%N_POINTS_X, idy.astype(int)%N_POINTS_Y, :] * dt
         
         time += dt
-        x_0 = 0.5#*xmax * jnp.sin(time/10*np.pi)
-        #T_bottom = THOT + 2*jnp.exp(-((x-0.5-x_0)/10)**2) * jnp.sin(x/xmax * jnp.pi)
+        x_0 = 0.5 * jnp.sin(time/30*np.pi)
+        T_bottom = THOT + 0.5*jnp.cos(time/50*np.pi)*jnp.exp(-((x-0.5-x_0)*10)**2) #* jnp.sin(x/xmax * jnp.pi)
         fOut = fIn
         tOut = tIn
             
@@ -155,7 +155,8 @@ def main():
         
         
     for iteration_index in trange(N_ITERATIONS):
-        
+        if jnp.isnan(fIn).any():
+            break
         if iteration_index%PLOT_EVERY_N_STEPS == 0:
             tracers.append(tracer)
             k = iteration_index//PLOT_EVERY_N_STEPS

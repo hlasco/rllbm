@@ -1,26 +1,26 @@
 import holoviews as hv
-
 import xarray as xr
 import panel as pn
 
+import datashader as ds
 
-df = xr.open_dataset('../outputs_1.nc', chunks={'time':64})
+df = xr.open_dataset('outputs_1.nc')
 
 renderer = hv.renderer('bokeh')
 
 stream = hv.streams.Stream.define('time', time=0)()
 
-def get_image(time):
-    img = hv.Image(df.temp.isel(time=time))
-    img.opts()
-    
-    layout = (img + img.sample(ny=32)).cols(1)
+def get_layout(time):
+    cvs = ds.Canvas(plot_width=128, plot_height=128)
+    img = hv.Image(cvs.raster(df.temp.isel(time=time).T))
+    curve = hv.Curve(df.temp.isel(time=time, ny=0))
+    layout = (img + curve).cols(1)
     return layout
 
-dmap = hv.DynamicMap(get_image, streams=[stream]).opts(
+dmap = hv.DynamicMap(get_layout, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
-        clim=(-0.5, 0.5),
+        clim=(-0.03, 0.03),
         xlabel="",
         xticks=0,
         colorbar=True,
@@ -32,45 +32,29 @@ dmap = hv.DynamicMap(get_image, streams=[stream]).opts(
         framewise=True,
         width=400,
         height=150,
-        ylim=(-0.5, 0.5),
+        ylim=(-0.55, 0.55),
         ylabel="Bottom Temperature"),
 )
 
-slider = pn.widgets.IntSlider(
+player = pn.widgets.Player(
+    name='Player',
     start=0,
     end=(len(df.time)-1),
     value=0,
-    step=1,
-    name="Snapshot"
+    loop_policy='once',
+    width=400,
+    interval=200,
 )
 
-# Create a slider and play buttons
-def animate_update():
-    time = (slider.value + 1) % (len(df.time)-1)
-    slider.value = time
-
-def slider_update(event):
-    stream.event(time=event.new)
-    
-def animate(event):
-    if button.name == '► Play':
-        button.name = '❚❚ Pause'
-        callback.start()
-    else:
-        button.name = '► Play'
-        callback.stop()
-    
-slider.param.watch(slider_update, 'value')
-
-button = pn.widgets.Button(name='► Play', width=60, align='end')
-button.on_click(animate)
-callback = pn.state.add_periodic_callback(animate_update, 50, start=False)
-
+@pn.depends(time=player.param.value)
+def animate(time):
+    stream.event(time=value)
 
 app = pn.Column(
     dmap,
-    pn.Row(slider, button),
+    player,
+    animate,
 ).servable(title='HoloViews App')
 
 if __name__=="__main__":
-    pn.serve(app, start=True, show=True)
+    pn.serve(app, start=True, show=False, port=40541)
