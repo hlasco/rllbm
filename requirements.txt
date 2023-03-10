@@ -5,5 +5,7 @@ tqdm
 rich
 netCDF4
 xarray
-plotly
+dask
 pytest
+bokeh
+holoviews
