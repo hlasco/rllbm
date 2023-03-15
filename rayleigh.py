@@ -1,19 +1,67 @@
+import jax.numpy as jnp
+from rllbm.lattice import RayleighBenardSimulation
+from tqdm.rich import trange
+import netCDF4
+
+if __name__=="__main__":
+    sim = RayleighBenardSimulation(64, 64, 0.71, 1e8, 0.005)
+    temperature = jnp.zeros((64,64))
+    temperature = temperature.at[:,0].set(
+        0.5*jnp.exp(-((sim.x/sim.nx-0.5)*10)**2)
+    )
+
+    sim.initialize(temperature, tracers = [jnp.array([0.5, 0.5])])
+    
+    
+    with netCDF4.Dataset("outputs_1.nc", "w", format='NETCDF4_CLASSIC') as f:
+        f.createDimension('nx', sim.nx)
+        f.createDimension('ny', sim.ny)
+        f.createDimension('time', None)
+        
+        f.createVariable('t', 'f4', 'time')
+        f.createVariable('x', 'f4', 'nx')[:] = sim.x
+        f.createVariable('y', 'f4', 'ny')[:] = sim.y
+        
+        f.createVariable('temp', 'f4', ('time', 'nx', 'ny'))
+        f.createVariable('ux', 'f4', ('time', 'nx', 'ny'))
+        f.createVariable('uy', 'f4', ('time', 'nx', 'ny'))
+
+    for i in trange(20000):
+        sim.step()
+        x_0 = 0.5 * jnp.sin(sim.time/7.4567*jnp.pi)
+        sim.temperature_bot = 0.5*jnp.cos(sim.time/50*jnp.pi)*jnp.exp(-((sim.x/sim.nx-0.5-x_0)*10)**2)* jnp.sin(sim.x/sim.nx * jnp.pi)
+    
+        if i%100 == 0:
+            _, u, t = sim.get_macroscopics()
+            k = i//1000
+            with netCDF4.Dataset("outputs_1.nc", "a", format='NETCDF4_CLASSIC') as f:
+                nctime = f.variables['t']
+                nctime[k] = sim.time
+                nctemp  = f.variables['temp']
+                nctemp[k,:,:] = t
+                ncuy = f.variables['ux']
+                ncuy[k,:,:] = u[:,:,0]
+                ncuy = f.variables['uy']
+                ncuy[k,:,:] = u[:,:,1]
+            
 
 
-from rllbm.lattice import D2Q5, D2Q9, stream, collide
+"""
+from rllbm.lattice import D2Q5, D2Q9, stream, collide_NSE_TDE
+from rllbm.lattice import no_slip_bc
 import jax
 import jax.numpy as jnp
 from tqdm.rich import trange
 import numpy as np
 import netCDF4
 
-N_POINTS_Y = 256
-N_POINTS_X = 256
+N_POINTS_Y = 64
+N_POINTS_X = 64
 DX = 1 / (N_POINTS_Y - 1.0)
 
 
 PR = 0.71
-RA = 1e10
+RA = 1e8
 GR = 0.005
 BUOYANCY = jnp.array([GR, 0.0])
 
@@ -37,38 +85,17 @@ SKIP_FIRST_N_ITERATIONS = 0
 d2q5 = D2Q5()
 d2q9 = D2Q9()
 
-def get_density(discrete):
-    density = jnp.sum(discrete, axis=-1)
-    return density
-
-def get_macroscopic(discrete, density, lattice):
-    macroscopic = jnp.einsum(
-        "NMQ,dQ->NMd",
-        discrete,
-        lattice,
-    ) / density[..., jnp.newaxis]
-
-    return macroscopic
-
-def get_microscopic(macroscopic, lattice):
-    microscopic = jnp.einsum(
-        "dQ,NMd->NMQ",
-        lattice,
-        macroscopic,
-    )
-    return microscopic
-
 def main():
     jax.config.update("jax_enable_x64", True)
 
     # Define a mesh
     x = jnp.arange(N_POINTS_X)/N_POINTS_Y
-    xmin = x.min()
-    xmax = x.max()
     y = jnp.arange(N_POINTS_Y)/N_POINTS_Y
-    
-    
     X, Y = jnp.meshgrid(x, y, indexing="ij")
+    
+    x_ = jnp.arange(N_POINTS_X)
+    y_ = jnp.arange(N_POINTS_Y)
+    X_, Y_ = jnp.meshgrid(x_, y_, indexing="ij")
 
     T_ini = TCOLD + (THOT-TCOLD) * (1-Y) #* (X-1)*X
     fIn = jnp.ones((N_POINTS_X, N_POINTS_Y, d2q9.size))
@@ -76,19 +103,17 @@ def main():
     
     tIn = T_ini[...,jnp.newaxis] * jnp.ones((N_POINTS_X, N_POINTS_Y, d2q5.size)) 
     tIn = tIn.at[1:-1,1:-1,:].set((THOT-TCOLD) * (tIn[1:-1,1:-1,:] + 0.1*np.random.rand(N_POINTS_X-2,N_POINTS_Y-2,5)-0.05))
-    #T_bottom = THOT + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X)-0.05) #* jnp.exp(-((x-1)/2)**2) * jnp.sin(x/xmax * jnp.pi)/5
-    T_bottom = THOT + 0.5*jnp.exp(-((x-0.5)*10)**2) #* jnp.sin(x/xmax * jnp.pi)
-    #T_bottom = THOT * jnp.ones(N_POINTS_X)
+    T_bottom = THOT + 0.5*jnp.exp(-((x-0.5)*10)**2)
     T_top = TCOLD * jnp.ones(N_POINTS_X)
     tIn = tIn.at[:, 0, :].set(T_bottom[:, jnp.newaxis])
     tIn = tIn.at[:, -1, :].set(T_top[:, jnp.newaxis])
-    #tIn = tIn.at[:, 0, :].set(THOT)
-    #tIn = tIn.at[:, :, :].set(T_ini[...,jnp.newaxis] + (THOT-TCOLD) * (0.1*np.random.rand(N_POINTS_X,N_POINTS_Y,5)-0.05))
-    #tIn = tIn.at[N_POINTS_X//2, 1, :].set(THOT + THOT/10.0)
     tIn = tIn * d2q5.weights[jnp.newaxis, jnp.newaxis, :]
     
     tracer = jnp.array([1.0, 0.5])
     dt = DT
+    
+    mask0 = (X_ == 0) | (X_ == N_POINTS_X-1) | (Y_ == 0) | (Y_ == N_POINTS_Y-1)
+    mask1 = (X_ == 0) | (X_ == N_POINTS_X-1)
 
     @jax.jit
     def update(fIn, tIn, time, tracer, dt):
@@ -102,23 +127,18 @@ def main():
         time += dt
         x_0 = 0.5 * jnp.sin(time/30*np.pi)
         T_bottom = THOT + 0.5*jnp.cos(time/50*np.pi)*jnp.exp(-((x-0.5-x_0)*10)**2) #* jnp.sin(x/xmax * jnp.pi)
+        
+        
         fOut = fIn
         tOut = tIn
             
-        fOut, tOut = collide(fOut, d2q9, OMEGANS, tOut, d2q5, OMEGAT, BUOYANCY)
+        fOut, tOut = collide_NSE_TDE(fOut, d2q9, OMEGANS, tOut, d2q5, OMEGAT, BUOYANCY)
         
         fOut = stream(fOut, d2q9)
         tOut = stream(tOut, d2q5)
         
-        for i in range(d2q9.size):
-            fOut = fOut.at[:, 0, i].set(fIn[:, 0, d2q9.opposite_indices[i]])
-            fOut = fOut.at[:, N_POINTS_Y, i].set(fIn[:, N_POINTS_Y,  d2q9.opposite_indices[i]])
-            fOut = fOut.at[N_POINTS_X, :, i].set(fIn[N_POINTS_X, :,  d2q9.opposite_indices[i]])
-            fOut = fOut.at[0, :, i].set(fIn[0, :,  d2q9.opposite_indices[i]])
-            
-        for i in range(d2q5.size):
-            tOut = tOut.at[N_POINTS_X, :, i].set(tIn[N_POINTS_X, :,  d2q5.opposite_indices[i]])
-            tOut = tOut.at[0, :, i].set(tIn[0, :,  d2q5.opposite_indices[i]])
+        fOut = no_slip_bc(fOut, fIn, mask0, d2q9)
+        tOut = no_slip_bc(tOut, tIn, mask1, d2q5)
         
         tOut = tOut.at[:,-1,4].set(
             T_top - tOut[:,-1,0] - tOut[:,-1,1] - tOut[:,-1,3] - tOut[:,-1,2]
@@ -133,9 +153,6 @@ def main():
         
         
         return fIn, tIn, time, tracer, dt
-
-    #plt.style.use("dark_background")
-    #plt.figure(figsize=(10, 8), dpi=100)
 
     time = 0
     tracers=[]
@@ -161,9 +178,8 @@ def main():
             tracers.append(tracer)
             k = iteration_index//PLOT_EVERY_N_STEPS
             rho = d2q9.get_moment(fIn, 0)
+            u = d2q9.get_moment(fIn, 1) / rho[..., jnp.newaxis]
             T = d2q9.get_moment(tIn, 0)
-            
-            u = get_macroscopic(fIn, rho, d2q9.coords,)
             
             #x_0 = 0.5*xmax * jnp.sin(time/10*np.pi)
             #(jnp.abs(u).max(), dt, x_0)
@@ -183,3 +199,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+"""

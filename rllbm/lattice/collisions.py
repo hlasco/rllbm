@@ -5,13 +5,13 @@ import jax.numpy as jnp
 from jax.typing import ArrayLike
 from typing import Tuple
 
-def collide(
+def collide_NSE_TDE(
     dist_function_NSE: ArrayLike,
     lattice_NSE: Lattice,
     omega_NSE: jnp.float64,
-    dist_function_TD: ArrayLike,
-    lattice_TD: Lattice,
-    omega_TD: jnp.float64,
+    dist_function_TDE: ArrayLike,
+    lattice_TDE: Lattice,
+    omega_TDE: jnp.float64,
     buoyancy: ArrayLike,
 ) -> Tuple[Array]:
     """_summary_
@@ -20,9 +20,9 @@ def collide(
         dist_function_NSE (ArrayLike): _description_
         lattice_NSE (Lattice): _description_
         omega_NSE (jnp.float64): _description_
-        dist_function_TD (ArrayLike): _description_
-        lattice_TD (Lattice): _description_
-        omega_TD (jnp.float64): _description_
+        dist_function_TDE (ArrayLike): _description_
+        lattice_TDE (Lattice): _description_
+        omega_TDE (jnp.float64): _description_
         buoyancy (ArrayLike): _description_
 
     Returns:
@@ -33,7 +33,7 @@ def collide(
     velocity =  lattice_NSE.get_moment(dist_function_NSE, 1) / density
     velocity_norm2 = jnp.linalg.norm(velocity, axis=-1, ord=2,)[..., jnp.newaxis]**2
     
-    temperature = lattice_TD.get_moment(dist_function_TD, 0)[..., jnp.newaxis]
+    temperature = lattice_TDE.get_moment(dist_function_TDE, 0)[..., jnp.newaxis]
     
     tmp = 3*jnp.einsum(
         "dQ, NMd->NMQ",
@@ -61,17 +61,17 @@ def collide(
     
     tmp = 3*jnp.einsum(
         "dQ, NMd->NMQ",
-        lattice_TD.coords,
+        lattice_TDE.coords,
         velocity,
     )
     
-    eq_TD = (
-        temperature * lattice_TD.weights[jnp.newaxis, jnp.newaxis, :] * (
+    eq_TDE = (
+        temperature * lattice_TDE.weights[jnp.newaxis, jnp.newaxis, :] * (
             1 + tmp
         )
     )
     
     dist_function_NSE = dist_function_NSE - omega_NSE * (dist_function_NSE - eq_NSE) + force_NSE
-    dist_function_TD = dist_function_TD - omega_TD * (dist_function_TD - eq_TD)
+    dist_function_TDE = dist_function_TDE - omega_TDE * (dist_function_TDE - eq_TDE)
     
-    return dist_function_NSE, dist_function_TD
+    return dist_function_NSE, dist_function_TDE
