@@ -1,5 +1,7 @@
 
-
+from .stencil import *
+from .boundary import *
+from .lattice_ import *
 from .lattice import Lattice
 from .d2q5 import D2Q5
 from .d2q9 import D2Q9
