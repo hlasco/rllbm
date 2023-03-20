@@ -1,127 +1,117 @@
-import jax.numpy as jnp
-import jax
-from rllbm.lattice import D2Q5, D2Q9, stream, collide_NSE_TDE, no_slip_bc
 from functools import partial
-class RayleighBenardSimulation:
+from typing import List, Union
+
+from jax import Array, jit
+from jax import numpy as jnp
+from jax.typing import ArrayLike
+
+from rllbm.lattice.lattice import Lattice, CoupledLattices
+from rllbm.lattice.collisions import collide
+from rllbm.lattice.boundary import BoundaryDict, apply_boundary_conditions
+from rllbm.lattice.stream import stream
+
+__all__ = ["Simulation"]
+
+class Simulation:
     def __init__(
         self,
         nx: int,
         ny: int,
-        prandtl: float,
-        rayleigh: float,
-        buyancy: float,
+        dt: float,
+        omegas: Union[List[float], float],
+        collision_kwargs: dict,
     ) -> None:
         self.nx = nx
+        self.x = jnp.arange(nx)
         self.ny = ny
-
-        self.x = jnp.arange(self.nx)
-        self.y = jnp.arange(self.ny)
-        X, Y = jnp.meshgrid(self.x, self.y, indexing="ij")
-        self.no_slip_NSE = (X == 0) | (X == self.nx-1) | (Y == 0) | (Y == self.ny-1)
-        self.no_slip_TDE = (X == 0) | (X == self.nx-1)
-
-        self.prandtl = prandtl
-        self.rayleigh = rayleigh
-        self.buyancy = jnp.array([buyancy, 0])
+        self.y = jnp.arange(ny)
+        self.dt = dt
         
-        self.dx = 1.0 / ( max(nx, ny) - 1.0)
-        self.dt = (buyancy * self.dx)**0.5
-        
-        viscosity = (prandtl / rayleigh) ** 0.5 * self.dt / self.dx ** 2
-        kappa = 1.0 / (prandtl * rayleigh) ** 0.5 * self.dt / self.dx ** 2
-
-        self.omega_NSE = 1.0 / (3 * viscosity + 0.5)
-        self.omega_TDE = 1.0 / (3 * kappa + 0.5)
-        
-        self.d2q5 = D2Q5()
-        self.d2q9 = D2Q9()
+        self.omegas = omegas
+        self.collision_kwargs = collision_kwargs
         
         self.time = 0
-
+        
+        self.boundaries = None
+        self.bc_kwargs = None
+        self.lattice = None
+        self.dfs = None
+        self.collision_mask = None
+        self.stream_mask = None
     
-    def initialize(self, temperature, tracers=None):
-        self.dist_function_NSE = jnp.ones((self.nx, self.ny, self.d2q9.size))
-        self.dist_function_NSE *= self.d2q9.weights[jnp.newaxis, jnp.newaxis, :]
-        
-        self.dist_function_TDE = temperature[:,:,jnp.newaxis] * jnp.ones((self.nx, self.ny, self.d2q5.size))
-        self.dist_function_TDE *= self.d2q5.weights[jnp.newaxis, jnp.newaxis, :]
-        
-        self.temperature_bot = temperature[:, 0]
-        self.temperature_top = temperature[:,-1]
-        
-        self.tracers = tracers
-        
+    def initialize(
+        self,
+        lattice,
+        dfs,
+        tracers=None
+    ) -> None:
+        self.lattice = lattice
+        self.dfs = dfs
+        self.tracers = tracers        
         self.time = 0
-    
+        
+    def set_boundary_conditions(
+        self,
+        boundaries,
+        bc_kwargs
+    ) -> None:
+        self.boundaries = boundaries
+        self.bc_kwargs = bc_kwargs
+        
+        if isinstance(boundaries, tuple):
+            self.collision_mask = [bdy.collision_mask for bdy in self.boundaries]
+            self.stream_mask = [bdy.stream_mask for bdy in self.boundaries]
+        else:
+            self.collision_mask = self.boundaries.collision_mask
+            self.stream_mask = self.boundaries.stream_mask
+
     def step(self):
-        self.dist_function_NSE, self.dist_function_TDE = self._step(
-            self.dist_function_NSE,
-            self.dist_function_TDE,
-            self.temperature_top,
-            self.temperature_bot,
-        )
-        
-        if self.tracers:
-            self.tracers = self._update_tracers(self.tracers, self.dist_function_NSE)
-        
+        self.dfs = self._step(self.dfs, self.bc_kwargs)
         self.time += self.dt
-    
-    def get_macroscopics(self):
-        return self._get_microscopics(
-            self.dist_function_NSE,
-            self.dist_function_TDE,
+        
+    @partial(jit, static_argnums=(0))
+    def _step(self, dfs, bc_kwargs):
+        
+        dfs = collide(
+            self.lattice,
+            dfs,
+            self.omegas,
+            self.collision_mask,
+            **self.collision_kwargs,
         )
+        
+        dfs = stream(
+            self.lattice,
+            dfs, 
+            self.stream_mask,
+        )
+        
+        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, **bc_kwargs)
+        
+        return dfs
     
-    @partial(jax.jit, static_argnums=(0))
-    def _get_microscopics(self, dist_function_NSE, dist_function_TDE):
-        density = self.d2q9.get_moment(dist_function_NSE, 0)
-        velocity = self.d2q9.get_moment(dist_function_NSE, 1) / density[..., jnp.newaxis]
-        temperature = self.d2q9.get_moment(dist_function_TDE, 0)
+    @partial(jit, static_argnums=(0))
+    def get_macroscopics(
+        self,
+        dfs
+    ):
+        density = self.lattice[0].get_moment(dfs[0], order=0)
+        velocity = self.lattice[0].get_moment(dfs[0], 1) / density[..., jnp.newaxis]
+        temperature = self.lattice[1].get_moment(dfs[1], 0)
         return density, velocity, temperature
-
-    @partial(jax.jit, static_argnums=(0))
-    def _step(
-        self,
-        dist_function_NSE,
-        dist_function_TDE,
-        temperature_top,
-        temperature_bot,
-    ):
-
-        df_NSE_pc, df_TDE_pc = collide_NSE_TDE(
-            dist_function_NSE, self.d2q9, self.omega_NSE,
-            dist_function_TDE, self.d2q5, self.omega_TDE, self.buyancy,
-        )
-
-        df_NSE_new = stream(df_NSE_pc, self.d2q9)
-        df_TDE_new = stream(df_TDE_pc, self.d2q5)
-
-        df_NSE_new = no_slip_bc(df_NSE_new, dist_function_NSE, self.no_slip_NSE, self.d2q9)
-        df_TDE_new = no_slip_bc(df_TDE_new, dist_function_TDE, self.no_slip_TDE, self.d2q5)
-
-        for i in range(5):
-            df_TDE_new = df_TDE_new.at[:,-1,i].set(
-                -df_TDE_pc[:,-1,self.d2q5.opposite_indices[i]] + 1.0/5 * temperature_top
-            )
-            df_TDE_new = df_TDE_new.at[:,0,i].set(
-                -df_TDE_pc[:,-1,self.d2q5.opposite_indices[i]] + 1.0/5 * temperature_bot
-            )
-
-        return df_NSE_new, df_TDE_new
     
-    @partial(jax.jit, static_argnums=(0))
-    def _update_tracers(
-        self,
-        tracers,
-        dist_function_NSE,
-    ):
-        density = self.d2q9.get_moment(dist_function_NSE, 0)
-        velocity = self.d2q9.get_moment(dist_function_NSE, 1) / density[..., jnp.newaxis]
-        for tracer_id, tracer in enumerate(tracers):
-            idx, idy = jnp.floor(tracer[0] / self.dx), jnp.floor(tracer[1] / self.dx)
-            tracer += velocity[idx.astype(int)%self.nx, idy.astype(int)%self.ny, :] * self.dt
-            tracer = tracer.at[0].set(tracer[0] % 1.0)
-            tracer = tracer.at[1].set(tracer[1] % 1.0)
-            tracers[tracer_id] = tracer
-            
-        return tracers
+    #def _update_tracers(
+    #    self,
+    #    tracers,
+    #    dist_function_NSE,
+    #):
+    #    density = D2Q9.get_moment(dist_function_NSE, 0)
+    #    velocity = D2Q9.get_moment(dist_function_NSE, 1) / density[..., jnp.newaxis]
+    #    for tracer_id, tracer in enumerate(tracers):
+    #        idx, idy = jnp.floor(tracer[0] / self.dx), jnp.floor(tracer[1] / self.dx)
+    #        tracer += velocity[idx.astype(int)%self.nx, idy.astype(int)%self.ny, :] * self.dt
+    #        tracer = tracer.at[0].set(tracer[0] % 1.0)
+    #        tracer = tracer.at[1].set(tracer[1] % 1.0)
+    #        tracers[tracer_id] = tracer
+    #        
+    #    return tracers

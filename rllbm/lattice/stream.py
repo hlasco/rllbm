@@ -1,39 +1,81 @@
+from typing import Tuple, overload, List
+from functools import partial
 
 from jax import numpy as jnp
 from jax.typing import ArrayLike
-from typing import Tuple, overload
-from rllbm.lattice import Lattice
+from jax import Array, jit
 
-@overload
-def stream(lattice: Lattice, mask: ArrayLike[bool]):
-    """_summary_
+from rllbm.lattice.lattice import Lattice, CoupledLattices
+
+__all__ = ["stream"]
+
+@partial(jit, static_argnums=(0))
+def _stream(
+    lattice: Lattice,
+    dist_function: ArrayLike,
+    mask: ArrayLike
+) -> Array:
+    """ This function takes in a distribution function, and a mask, and streams the distribution function according to the mask.
+    The mask allows to stream the distribution function only on the fluid nodes, and not on the boundary nodes.
 
     Args:
-        dist_function (_type_): _description_
-        lattice (_type_): _description_
+        lattice (Lattice): The lattice on which the streaming is performed.
+        dist_function (ArrayLike): The distribution function to be streamed.
+        mask (ArrayLike): The mask where the streaming should be performed.
 
     Returns:
-        _type_: _description_
+        Array: The streamed distribution function.
     """
     for i in range(lattice.Q):
-        lattice.df = lattice.df.at[..., i].set(
-            jnp.where(
-                mask,
-                jnp.roll(
-                    a = lattice.df[..., i],
-                    shift = lattice.e[:,i],
-                    axis = [k for k in range(lattice.D)]
-                ),
-                lattice.df[...,i]
-            )
-        )
-    return lattice
+        dist_function = dist_function.at[...,i].set(jnp.where(
+            mask,
+            jnp.roll(
+                a = dist_function[..., i],
+                shift = lattice.e[:,i],
+                axis = [k for k in range(lattice.D)]
+            ),
+            dist_function[..., i]
+        ))
+    return dist_function
 
 @overload
-def stream(lattice_list: Tuple[Lattice], mask_list: Tuple[Lattice]) -> Tuple[Lattice]:
-    assert len(lattice_list) == len(mask_list)
-    n = len(lattice_list)
-    for i in range(n):
-        lattice_list[i] = stream(lattice_list[i], mask_list[i])
+@partial(jit, static_argnums=(0))
+def stream(
+    lattice: Lattice,
+    dist_function: ArrayLike,
+    mask: ArrayLike
+) -> Array:
+    """Apply the streaming step to the distribution function.
+
+    Args:
+        lattice (Lattice): The lattice on which the streaming is performed.
+        dist_function (ArrayLike): The distribution function to be streamed.
+        mask (ArrayLike): The mask where the streaming should be performed.
+
+    Returns:
+        Array: The streamed distribution function.
+    """
+    dist_function = _stream(lattice, dist_function, mask)
+    return dist_function
+
+@partial(jit, static_argnums=(0))
+def stream(
+    lattices: CoupledLattices,
+    dist_functions: List[ArrayLike],
+    masks: Tuple[ArrayLike]
+) -> Array:
+    """ Apply the streaming step to the distribution functions.
+
+    Args:
+        lattices (CoupledLattices): The coupled lattices on which the streaming is performed.
+        dist_functions (List[ArrayLike]): The distribution functions to be streamed.
+        masks (Tuple[ArrayLike]): The masks where the streaming should be performed.
+
+    Returns:
+        Array: The streamed distribution functions.
+    """
+
+    for i in range(len(lattices)):
+        dist_functions[i] = _stream(lattices[i], dist_functions[i], masks[i])
     
-    return lattice_list
+    return dist_functions
