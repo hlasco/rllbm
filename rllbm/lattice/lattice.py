@@ -10,7 +10,7 @@ from rllbm.lattice import Stencil
 
 __all__ = ["Lattice", "NavierStokesLattice", "AdvectionDiffusionLattice", "ConvectionLattice"]
 
-class Lattice(abc.ABC):
+class Lattice(abc.ABC, Stencil):
     _stencil: Stencil
     _shape: Tuple[int]
     _name: str = "BaseLattice"
@@ -85,7 +85,12 @@ class CoupledLattices(abc.ABC):
         return len(self.lattices)
     
     @abc.abstractmethod
-    def initialize(self, dist_functions: List[ArrayLike], *args, **kwargs) -> List[Array]:
+    def initialize(
+        self,
+        dist_functions: List[ArrayLike],
+        *args,
+        **kwargs
+    ) -> List[Array]:
         pass
     
     @abc.abstractmethod
@@ -111,7 +116,13 @@ class NavierStokesLattice(Lattice):
     ):
         super().__init__(stencil, shape)
         
-    def initialize(self, density: ArrayLike, velocity: ArrayLike, *args, **kwargs) -> Array:
+    def initialize(
+        self,
+        density: ArrayLike,
+        velocity: ArrayLike,
+        *args,
+        **kwargs,
+    ) -> Array:
         df_equilibrium = self.equilibrium(density, velocity)
         return df_equilibrium
     
@@ -142,7 +153,12 @@ class NavierStokesLattice(Lattice):
         return 0.0
     
     @partial(jit, static_argnums=(0))
-    def collision_terms(self, dist_function: ArrayLike, *args, **kwards) -> Tuple[Array]:
+    def collision_terms(
+        self,
+        dist_function: ArrayLike,
+        *args,
+        **kwards
+    ) -> Tuple[Array]:
         density = self.get_moment(dist_function, order=0)[...,jnp.newaxis]
         velocity = self.get_moment(dist_function, order=1) / density
         
@@ -156,7 +172,13 @@ class AdvectionDiffusionLattice(Lattice):
     def __init__(self, stencil: Stencil, shape: Tuple[int]):
         super().__init__(stencil, shape)
         
-    def initialize(self, temperature: ArrayLike, velocity: ArrayLike, *args, **kwargs) -> Array:
+    def initialize(
+        self,
+        temperature: ArrayLike,
+        velocity: ArrayLike,
+        *args,
+        **kwargs,
+    ) -> Array:
         df_equilibrium = self.equilibrium(velocity, temperature)
         return df_equilibrium
     
@@ -185,13 +207,21 @@ class AdvectionDiffusionLattice(Lattice):
         return 0.0
     
     @partial(jit, static_argnums=(0))
-    def collision_terms(self, dist_function: ArrayLike, velocity: ArrayLike) -> Tuple[Array]:
-        temperature = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
+    def collision_terms(
+        self,
+        dist_function: ArrayLike,
+        velocity: ArrayLike
+    ) -> Tuple[Array]:
+        temperature = self.get_macroscopics(dist_function)
         
         df_equilibrium = self.equilibrium(velocity=velocity, temperature=temperature)
         df_force = self.force()
         
         return df_equilibrium, df_force
+    
+    @partial(jit, static_argnums=(0))
+    def get_macroscopics(self, dist_function: ArrayLike) -> Array:
+        return self.get_moment(dist_function, order=0)[..., jnp.newaxis]
     
     
 class ConvectionLattice(CoupledLattices):
@@ -302,9 +332,7 @@ class ConvectionLattice(CoupledLattices):
             Tuple[Tuple[Array], Tuple[Array]]: The equilibrium and force terms for the NSE and ADE lattices.
         """
         # Get the moments of the distribution functions
-        density = self[0].get_moment(dist_functions[0], order=0)[...,jnp.newaxis]
-        velocity = self[0].get_moment(dist_functions[0], order=1) / density
-        temperature = self[1].get_moment(dist_functions[1], order=0)[...,jnp.newaxis]
+        density, velocity, temperature = self.get_macroscopics(dist_functions)
         
         # Compute the equilibrium terms
         equilibrium = [
@@ -328,3 +356,19 @@ class ConvectionLattice(CoupledLattices):
         )
         
         return equilibrium, force
+    
+    @partial(jit, static_argnums=(0))
+    def get_macroscopics(self, dist_functions: List[ArrayLike]) -> List[Array]:
+        """ Get the macroscopic quantities for the coupled NSE and ADE lattices.
+
+        Args:
+            dist_functions (List[ArrayLike]): The distribution functions for the NSE and ADE lattices.
+
+        Returns:
+            List[Array]: The macroscopic quantities for the NSE and ADE lattices.
+        """
+        density = self[0].get_moment(dist_functions[0], order=0)[...,jnp.newaxis]
+        velocity = self[0].get_moment(dist_functions[0], order=1) / density
+        temperature = self[1].get_moment(dist_functions[1], order=0)[...,jnp.newaxis]
+        
+        return [density, velocity, temperature]

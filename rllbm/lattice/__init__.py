@@ -1,4 +1,3 @@
-
 from .stencil import *
 from .boundary import *
 from .lattice import *
