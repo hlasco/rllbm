@@ -4,41 +4,74 @@ import panel as pn
 
 from holoviews.operation.datashader import rasterize
 
-df = xr.open_dataset('outputs_1.nc', chunks={'time': 16}).persist()
+df = xr.open_dataset('outputs_1.nc')
 
-renderer = hv.renderer('bokeh')
-
+hv.extension("bokeh")
 stream = hv.streams.Stream.define('time', time=0)()
 
-def get_layout(time):
+def temp_image(time):
     img = rasterize(
-        hv.Image(df.isel(time=time).temp),
+        hv.Image(
+            (df.x, df.y, df.isel(time=time).temp.T),
+        ),
+        width=256,
+        height=256,
         dynamic=False,
-        width=64,
-        height=64,
     )
-    curve = hv.Curve(df.isel(time=time, ny=0).temp)
-    layout = (img + curve).cols(1)
-    return layout
+    return img
 
-dmap = hv.DynamicMap(get_layout, streams=[stream]).opts(
+def temp_curve(time):
+    curve = hv.Curve(
+        (df.isel(time=time, nx=0).temp, df.y, ),
+        "T_0", "y",
+    )
+    return curve
+
+def get_tracers(time):
+    tracers_data = df.tracers.isel(time=slice(max(0, time-15), time+1))
+    tracers = hv.Points((tracers_data[0],)) * hv.Points((tracers_data[0][-1:],))
+    return tracers
+
+img =  hv.DynamicMap(temp_image, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
-        clim=(-0.04, 0.04),
-        xlabel="",
-        xticks=0,
+        symmetric=True,
+        clim=(-0.1, 0.1),
+        xlim=(0.0, 1.0),
+        ylim=(0.0, 1.0),
+        ylabel="",
+        yticks=0,
         colorbar=True,
         colorbar_position='top',
         width=400,
         height=400,
-        tools=['hover']
+        aspect='equal',
+        tools=['hover'],
+        framewise=False,
     ),
+)
+
+curve = hv.DynamicMap(temp_curve, streams=[stream]).opts(
     hv.opts.Curve(
         framewise=True,
-        width=400,
-        height=150,
-        ylim=(-0.55, 0.55),
-        ylabel="Bottom Temperature"),
+        width=150,
+        height=400,
+        ylim=(0.0, 1.0),
+        xlim=(-0.55, 0.55),
+        xlabel="Temperature"
+    ),
+)
+
+tracers = hv.DynamicMap(get_tracers, streams=[stream]).opts(
+    hv.opts.Curve(
+        color='k',
+    ),
+    hv.opts.Points(
+        color='#424242',
+        marker='o',
+        size=5,
+        alpha=0.5
+    ),
 )
 
 player = pn.widgets.Player(
@@ -47,21 +80,21 @@ player = pn.widgets.Player(
     end=(len(df.time)-1),
     value=0,
     loop_policy='once',
-    width=400,
-    interval=200,
+    width=550,
+    interval=100,
 )
 
 @pn.depends(time=player.param.value)
 def animate(time):
     stream.event(time=time)
 
+layout = (curve + img*tracers)
+
 app = pn.Column(
-    dmap,
+    layout,
     player,
     animate,
 )
 
 if __name__=="__main__":
-    #from bokeh.resources import INLINE
-    #app.save('visu', embed=True, resources=INLINE)
     pn.serve(app, start=True, show=False, port=40541)
