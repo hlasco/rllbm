@@ -14,6 +14,7 @@ class Lattice(abc.ABC, Stencil):
     _stencil: Stencil
     _shape: Tuple[int]
     _name: str = "BaseLattice"
+    _macroscopics: List[str] = []
     
     def __init__(self, stencil: Stencil, shape: Tuple[int]):
         self._stencil = stencil
@@ -75,6 +76,9 @@ class Lattice(abc.ABC, Stencil):
         pass
     
 class CoupledLattices(abc.ABC):
+    _name: str = "BaseCoupledLattices"
+    _macroscopics: List[str] = []
+    
     def __init__(self, lattices: List[Lattice]):
         self.lattices = [l for l in lattices]
     
@@ -109,6 +113,7 @@ class CoupledLattices(abc.ABC):
     
 class NavierStokesLattice(Lattice):
     _name = "NSE"
+    _macroscopics = ["density", "velocity"]
     def __init__(
         self,
         stencil: Stencil,
@@ -167,8 +172,15 @@ class NavierStokesLattice(Lattice):
         
         return df_equilibrium, df_force
     
+    @partial(jit, static_argnums=(0))
+    def get_macroscopics(self, dist_function: ArrayLike) -> Array:
+        density = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
+        velocity = self.get_moment(dist_function, order=1) / density
+        return density, velocity
+    
 class AdvectionDiffusionLattice(Lattice):
     _name = "ADE"
+    _macroscopics = ["temperature"]
     def __init__(self, stencil: Stencil, shape: Tuple[int]):
         super().__init__(stencil, shape)
         
@@ -225,6 +237,8 @@ class AdvectionDiffusionLattice(Lattice):
     
     
 class ConvectionLattice(CoupledLattices):
+    _name = "CONV"
+    _macroscopics = ["density", "velocity", "temperature"]
     
     def __init__(self, nse_lattice, ade_lattice):
         assert nse_lattice.name == "NSE"

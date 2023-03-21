@@ -41,13 +41,12 @@ class Simulation:
         self.collision_mask = None
         self.stream_mask = None
 
-    def initialize(self, lattice, dfs, tracers=None) -> None:
+    def initialize(self, lattice: Union[Lattice, CoupledLattices], dfs: ArrayLike) -> None:
         self.lattice = lattice
         self.dfs = dfs
-        self.tracers = tracers
         self.time = 0
 
-    def set_boundary_conditions(self, boundaries, bc_kwargs) -> None:
+    def set_boundary_conditions(self, boundaries: BoundaryDict, bc_kwargs: dict) -> None:
         self.boundaries = boundaries
         self.bc_kwargs = bc_kwargs
 
@@ -63,7 +62,7 @@ class Simulation:
         self.time += self.dt
 
     @partial(jit, static_argnums=(0))
-    def _step(self, dfs, bc_kwargs):
+    def _step(self, dfs: ArrayLike, bc_kwargs: dict) -> Array:
         dfs = collide(
             self.lattice,
             dfs,
@@ -83,21 +82,6 @@ class Simulation:
         return dfs
 
     @partial(jit, static_argnums=(0))
-    def get_macroscopics(self, dfs):
+    def get_macroscopics(self, dfs: ArrayLike) -> List[Array]:
         return self.lattice.get_macroscopics(dfs)
 
-    # def _update_tracers(
-    #    self,
-    #    tracers,
-    #    dist_function_NSE,
-    # ):
-    #    density = D2Q9.get_moment(dist_function_NSE, 0)
-    #    velocity = D2Q9.get_moment(dist_function_NSE, 1) / density[..., jnp.newaxis]
-    #    for tracer_id, tracer in enumerate(tracers):
-    #        idx, idy = jnp.floor(tracer[0] / self.dx), jnp.floor(tracer[1] / self.dx)
-    #        tracer += velocity[idx.astype(int)%self.nx, idy.astype(int)%self.ny, :] * self.dt
-    #        tracer = tracer.at[0].set(tracer[0] % 1.0)
-    #        tracer = tracer.at[1].set(tracer[1] % 1.0)
-    #        tracers[tracer_id] = tracer
-    #
-    #    return tracers
