@@ -6,7 +6,7 @@ from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
-from rllbm.lattice.lattice import Lattice, CoupledLattices
+from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = [
     "BounceBackBoundary",

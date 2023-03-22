@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import jax
 
-from rllbm import lattice as lbm
+from rllbm import lbm as lbm
 
 from tqdm.rich import trange
 from tqdm import TqdmExperimentalWarning

@@ -1,4 +1,4 @@
-from rllbm.lattice import D2Q5
+from rllbm.lbm import D2Q5
 import jax.numpy as jnp
 
 def test_D2Q5_moment_0():

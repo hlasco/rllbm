@@ -5,10 +5,10 @@ from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
-from rllbm.lattice.lattice import Lattice, CoupledLattices
-from rllbm.lattice.collisions import collide
-from rllbm.lattice.boundary import BoundaryDict, apply_boundary_conditions
-from rllbm.lattice.stream import stream
+from rllbm.lbm.lattice import Lattice, CoupledLattices
+from rllbm.lbm.collisions import collide
+from rllbm.lbm.boundary import BoundaryDict, apply_boundary_conditions
+from rllbm.lbm.stream import stream
 
 __all__ = ["Simulation"]
 

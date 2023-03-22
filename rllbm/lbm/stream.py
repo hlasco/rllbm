@@ -5,7 +5,7 @@ from jax import numpy as jnp
 from jax.typing import ArrayLike
 from jax import Array, jit
 
-from rllbm.lattice.lattice import Lattice, CoupledLattices
+from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = ["stream"]
 

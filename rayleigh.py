@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import jax
 
-from rllbm.lattice import (
+from rllbm.lbm import (
     Simulation,
     NavierStokesLattice,
     AdvectionDiffusionLattice,
