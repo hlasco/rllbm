@@ -4,7 +4,7 @@ import panel as pn
 
 from holoviews.operation.datashader import rasterize
 
-df = xr.open_dataset("outputs_1.nc")
+df = xr.open_dataset("outputs.nc")
 
 hv.extension("bokeh")
 stream = hv.streams.Stream.define("time", time=0)()
@@ -15,6 +15,8 @@ def temp_image(time):
         hv.Image(
             (df.x, df.y, df.isel(time=time).temp.T),
         ),
+        width=256,
+        height=256,
         dynamic=False,
     )
     return img
@@ -31,13 +33,6 @@ def temp_curve(time):
     )
     return curve
 
-
-def get_tracers(time):
-    tracers_data = df.tracers.isel(time=slice(max(0, time - 15), time + 1))
-    tracers = [hv.Points((tracers_data[k],)) for k in tracers_data.tracer_id.data]
-    return hv.Overlay(tracers)
-
-
 img = hv.DynamicMap(temp_image, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
@@ -49,6 +44,7 @@ img = hv.DynamicMap(temp_image, streams=[stream]).opts(
         yticks=0,
         colorbar=True,
         colorbar_position="top",
+        colorbar_opts={"title": "Fluid Temperature"},
         width=400,
         height=400,
         aspect="equal",
@@ -64,18 +60,15 @@ curve = hv.DynamicMap(temp_curve, streams=[stream]).opts(
         height=400,
         ylim=(0.0, 1.0),
         xlim=(-0.55, 0.55),
-        xlabel="Temperature",
+        xticks=(-0.5, 0, 0.5),
+        xlabel="Wall Temperature",
     ),
-)
-
-tracers = hv.DynamicMap(get_tracers, streams=[stream]).opts(
-    hv.opts.Points(marker="o", size=5, alpha=0.5),
 )
 
 player = pn.widgets.Player(
     name="Player",
     start=0,
-    end=(len(df.time) - 1),
+    end=(len(df.time) - 1)//2,
     value=0,
     loop_policy="once",
     width=550,
@@ -85,10 +78,10 @@ player = pn.widgets.Player(
 
 @pn.depends(time=player.param.value)
 def animate(time):
-    stream.event(time=time)
+    stream.event(time=time*2)
 
 
-layout = curve + img * tracers
+layout = curve + img
 
 app = pn.Column(
     layout,
@@ -97,4 +90,4 @@ app = pn.Column(
 )
 
 if __name__ == "__main__":
-    pn.serve(app, start=True, show=False, port=40541)
+    pn.serve(app, start=True, show=True)

@@ -107,11 +107,11 @@ def write_ncfile(path, time_index, time, velocity, temperature, curl, tracers):
 if __name__ == "__main__":
     nc_path = "outputs_1.nc"
 
-    nx = 64
-    ny = 64
+    nx = 128
+    ny = 128
 
     prandtl = 0.71
-    rayleigh = 1e8
+    rayleigh = 1e9
     buoyancy = 0.001
 
     dx = 1.0 / (max(nx, ny) - 1.0)
