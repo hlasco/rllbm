@@ -40,7 +40,7 @@ class Stencil:
         
         output_litteral = "".join([f"{lowercase[i%26]}" for i in range(order)])
 
-        # The einsum litteral is of the form: "ABQab->ABab"
+        # The einsum litteral is of the form: "AB,Qa,Qb->ABab"
         einsum_litteral = d_litteral + "Q" + e_litteral + "->" + d_litteral + output_litteral
 
         # Get the distribution function moments
