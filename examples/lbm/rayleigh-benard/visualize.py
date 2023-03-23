@@ -9,14 +9,18 @@ df = xr.open_dataset("outputs.nc")
 hv.extension("bokeh")
 stream = hv.streams.Stream.define("time", time=0)()
 
+xmin, xmax = df.x.values.min(), df.x.values.max()
+ymin, ymax = df.y.values.min(), df.y.values.max()
+aspect = (ymax - ymin) / (xmax - xmin)
+aspect = [min(1/aspect, 1), min(aspect, 1)]
 
 def temp_image(time):
     img = rasterize(
         hv.Image(
             (df.x, df.y, df.isel(time=time).temp.T),
         ),
-        width=256,
-        height=256,
+        #width=int(256 * aspect[0]),
+        #height=int(256 * aspect[1]),
         dynamic=False,
     )
     return img
@@ -38,27 +42,26 @@ img = hv.DynamicMap(temp_image, streams=[stream]).opts(
         cmap="RdBu_r",
         symmetric=True,
         clim=(-0.1, 0.1),
-        xlim=(0.0, 1.0),
-        ylim=(0.0, 1.0),
+        xlim=(xmin, xmax),
+        ylim=(ymin, ymax),
         ylabel="",
         yticks=0,
         colorbar=True,
-        colorbar_position="top",
+        colorbar_position="right",
         colorbar_opts={"title": "Fluid Temperature"},
-        width=400,
-        height=400,
-        aspect="equal",
+        frame_width = int(400 * aspect[0]),
+        frame_height = int(400 * aspect[1]),
         tools=["hover"],
-        framewise=False,
+        framewise=True,
     ),
 )
 
 curve = hv.DynamicMap(temp_curve, streams=[stream]).opts(
     hv.opts.Curve(
         framewise=True,
-        width=150,
-        height=400,
-        ylim=(0.0, 1.0),
+        frame_width = int(100 * aspect[0]),
+        frame_height = int(400 * aspect[1]),
+        ylim=(ymin, ymax),
         xlim=(-0.55, 0.55),
         xticks=(-0.5, 0, 0.5),
         xlabel="Wall Temperature",
@@ -68,24 +71,24 @@ curve = hv.DynamicMap(temp_curve, streams=[stream]).opts(
 player = pn.widgets.Player(
     name="Player",
     start=0,
-    end=(len(df.time) - 1)//2,
+    end=(len(df.time) - 1),
     value=0,
     loop_policy="once",
-    width=550,
+    width=int(500 * aspect[0]),
     interval=100,
 )
 
 
 @pn.depends(time=player.param.value)
 def animate(time):
-    stream.event(time=time*2)
+    stream.event(time=time)
 
 
 layout = curve + img
 
 app = pn.Column(
     layout,
-    player,
+    pn.Row(pn.layout.HSpacer(), player, pn.layout.HSpacer()),
     animate,
 )
 

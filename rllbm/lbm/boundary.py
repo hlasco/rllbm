@@ -10,7 +10,7 @@ from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = [
     "BounceBackBoundary",
-    "DirichletBoundary",
+    "InletBoundary",
     "BoundaryDict",
     "apply_boundary_conditions",
 ]
@@ -19,10 +19,12 @@ __all__ = [
 class Boundary(abc.ABC):
     _mask: ArrayLike
     _nane: str
+    _size: int
 
     def __init__(self, name: str, mask: ArrayLike) -> None:
         self._name = name
         self._mask = mask
+        self._size = jnp.sum(mask, dtype=jnp.int32)
 
     @abc.abstractmethod
     def __call__(
@@ -175,11 +177,10 @@ class BounceBackBoundary(Boundary):
         return ~self._mask
 
 
-class DirichletBoundary(Boundary):
-    """A Dirichlet boundary condition. The distribution function is set so that the
-    macroscopic value of the fluid is equal to the given value on the boundary nodes. It
-    can be used to model a fluid inlet or outlet with a given value of a macroscopic
-    variable.
+class InletBoundary(Boundary):
+    """An inlet boundary condition. The distribution function is set to the
+    equilibrium distribution function on the boundary nodes. It can be used to model
+    an inlet.
     """
 
     def __init__(self, name, mask: ArrayLike) -> None:
@@ -190,23 +191,32 @@ class DirichletBoundary(Boundary):
         self,
         lattice: Lattice,
         dist_funcion: ArrayLike,
-        fixed_value: ArrayLike = 0.0,
+        m: Union[ArrayLike, float] = 0.0,
+        u: ArrayLike = jnp.array([0.0, 0.0]),
     ) -> Array:
         """Apply the dirichlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
             dist_funcion (ArrayLike): The distribution function.
-            fixed_value (ArrayLike): The value of the macroscopic variable on the
-                boundary.
+            m (ArrayLike): The first moment of the distribution function.
+            u (ArrayLike): The second moment of the distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
                 condition.
         """
+
+        if m.shape == ():
+            m = m * jnp.ones((self._size))
+        m = m[..., jnp.newaxis]
+
+        if u.shape == (2,):
+            u = jnp.ones((self._size, 2)) * u[jnp.newaxis, :]
+
+        equilibrium = lattice.equilibrium(m, u)
+
         for i in range(lattice.Q):
-            dist_funcion = dist_funcion.at[self._mask, i].set(
-                1.0 / lattice.Q * fixed_value
-            )
+            dist_funcion = dist_funcion.at[self._mask, i].set(equilibrium[:, i])
         return dist_funcion
 
     @property
@@ -216,14 +226,17 @@ class DirichletBoundary(Boundary):
 
     @property
     def stream_mask(self):
-        # Streaming is performed on all nodes.
-        return jnp.ones_like(self._mask)
+        # Streaming is performed on all nodes except the boundary nodes.
+        return ~self._mask
 
 
 @overload
 @partial(jit, static_argnums=(0, 1))
 def apply_boundary_conditions(
-    lattice: Lattice, boundary_dict: BoundaryDict, dist_function: ArrayLike, **bc_kwargs
+    lattice: Lattice,
+    boundary_dict: BoundaryDict,
+    dist_function: ArrayLike,
+    **bc_kwargs,
 ) -> Array:
     """Apply all the boundary conditions to the given distribution function.
 
@@ -245,7 +258,7 @@ def apply_boundary_conditions(
     lattices: CoupledLattices,
     boundary_dicts: List[BoundaryDict],
     dist_functions: List[ArrayLike],
-    **bc_kwargs,
+    bc_kwargs: List[dict],
 ) -> List[Array]:
     """Apply all the boundary conditions to the given distribution functions.
 
@@ -260,8 +273,8 @@ def apply_boundary_conditions(
             conditions.
     """
     return [
-        boundary_dict(lattice, dist_function, **bc_kwargs)
-        for lattice, boundary_dict, dist_function in zip(
-            lattices, boundary_dicts, dist_functions
+        boundary_dict(lattice, dist_function, **kwargs)
+        for lattice, boundary_dict, dist_function, kwargs in zip(
+            lattices, boundary_dicts, dist_functions, bc_kwargs
         )
     ]

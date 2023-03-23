@@ -28,24 +28,24 @@ class Stencil:
     @partial(jit, static_argnums=(0, 2))
     def get_moment(cls, dist_function: ArrayLike, order: int) -> Array:
         """Returns the moment of the distribution function.
-
-        Args:
-            dist_function (ArrayLike): _description_
-            order (int): _description_
-
-        Returns:
-            Array: _description_
         """
+        dim = len(dist_function.shape) - 1
+        
         # Create the einsum litteral
         lowercase = string.ascii_lowercase
+        uppercase = string.ascii_uppercase
+        
         e_litteral = "".join([f",{lowercase[i%26]}Q" for i in range(order)])
+        d_litteral = "".join([f"{uppercase[i%26]}" for i in range(dim)])
+        
         output_litteral = "".join([f"{lowercase[i%26]}" for i in range(order)])
 
-        einsum_litteral = "NMQ" + e_litteral + "->NM" + output_litteral
+        # The einsum litteral is of the form: "ABQab->ABab"
+        einsum_litteral = d_litteral + "Q" + e_litteral + "->" + d_litteral + output_litteral
 
         # Get the distribution function moments
-        args = [cls.e] * order
-        return jnp.einsum(einsum_litteral, dist_function, *args)
+        stacked_e = [cls.e] * order
+        return jnp.einsum(einsum_litteral, dist_function, *stacked_e)
 
 
 class D1Q3(Stencil):

@@ -19,8 +19,8 @@ def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Arra
 
     Args:
         lattice (Lattice): The lattice on which the streaming is performed.
-        dist_function (ArrayLike): The distribution function to be streamed. mask
-        (ArrayLike): The mask where the streaming should be performed.
+        dist_function (ArrayLike): The distribution function to be streamed.
+        mask (ArrayLike): The mask where the streaming should be performed.
 
     Returns:
         Array: The streamed distribution function.
@@ -64,11 +64,9 @@ def stream(
     """Apply the streaming step to the distribution functions.
 
     Args:
-        lattices (CoupledLattices): The coupled lattices on which the streaming is
-            performed.
-        dist_functions (List[ArrayLike]): The distribution functions to be
-        streamed. masks (Tuple[ArrayLike]): The masks where the streaming should be
-            performed.
+        lattices (CoupledLattices): The coupled lattices on which the streaming is performed.
+        dist_functions (List[ArrayLike]): The distribution functions to be streamed.
+        masks (Tuple[ArrayLike]): The masks where the streaming should be performed.
 
     Returns:
         Array: The streamed distribution functions.

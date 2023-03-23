@@ -12,18 +12,24 @@ import warnings
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 @jax.jit
-def get_bottom_temperature(t, x, nx, freq_x0=0.005, freq_amp=0.02, amp=0.5, width=0.1):
+def get_wall_temperature(t, x, freq_x0=0.005, freq_amp=0.02, amp=0.5, width=0.1):
     """
-    Function to calculate the bottom temperature at the current time step (t) and spatial location (x)
+    Function to calculate the bottom temperature at the current time step (t) and spatial location (y)
         nx is the number of grid points in the x-direction
         freq_x0 is the frequency of the sinusoidal variation in the x-direction
         freq_amp is the frequency of the sinusoidal variation in the amplitude
         amp is the maximum amplitude of the temperature
         width is the width of the temperature profile
     """
-    x_0 = 0.5 * (x[-1] - x[0]) * jnp.sin(2 * jnp.pi * t * freq_x0)
-    amp = amp * jnp.sin(x / nx * jnp.pi) * jnp.cos(2 * jnp.pi * t * freq_amp)
-    return amp * jnp.exp(-0.5 * ((x - nx / 2.0 - x_0) / (width * nx)) ** 2)
+    x_min = x[0]
+    x_max = x[-1]
+    
+    x_ = (x - x_min) / (x_max - x_min)
+
+    x_peak = 0.5 * ( 1 + jnp.sin(2 * jnp.pi * t * freq_x0))
+    amp = amp * jnp.sin(x_  * jnp.pi) * jnp.cos(2 * jnp.pi * t * freq_amp)
+    ret = amp * jnp.exp(-0.5 * ((x_ - x_peak) / (width)) ** 2)
+    return ret
 
 
 def init_ncfile(path, sim):
@@ -47,8 +53,8 @@ def init_ncfile(path, sim):
             least_significant_digit=3,
         ),
 
-        ncfile.variables["x"][:] = sim.x / sim.nx
-        ncfile.variables["y"][:] = sim.y / sim.ny
+        ncfile.variables["x"][:] = sim.x * sim.dx
+        ncfile.variables["y"][:] = sim.y * sim.dx
 
 
 def write_ncfile(path, time_index, time, temperature):
@@ -71,7 +77,7 @@ if __name__ == "__main__":
     gravity = 9.81
     buoyancy = gravity * thermal_expansion
 
-    dx = 1.0 / (max(nx, ny) - 1.0)
+    dx = 1.0 / (max(nx, ny))
     dt = (buoyancy * dx) ** 0.5
     
     # The run time in code units
@@ -94,7 +100,6 @@ if __name__ == "__main__":
     collision_kwargs = {
         "gravity": jnp.array([0, gravity]),
         "thermal_expansion": thermal_expansion,
-        "dt": dt,
     }
 
     # Instantiate the simulation
@@ -104,8 +109,9 @@ if __name__ == "__main__":
 
     # Instantiate the lattice
     lattice = lbm.ConvectionLattice(
-        lbm.NavierStokesLattice(lbm.D2Q9, (nx, ny)),
-        lbm.AdvectionDiffusionLattice(lbm.D2Q5, (nx, ny)),
+        fluid_stencil=lbm.D2Q9,
+        thermal_stencil=lbm.D2Q5,
+        shape=(nx, ny),
     )
 
     # Initialize the density functions
@@ -117,39 +123,39 @@ if __name__ == "__main__":
     sim.initialize(lattice, dfs)
 
     # Set the boundary conditions
-    boundary_NSE = lbm.BoundaryDict(
+    fluid_bc = lbm.BoundaryDict(
         [
             lbm.BounceBackBoundary(
-                "NSE No-Slip Walls", (X == 0) | (X == nx - 1) | (Y == 0) | (Y == ny - 1)
+                "No-Slip Walls", (X == 0) | (X == nx - 1) | (Y == 0) | (Y == ny - 1)
             ),
         ]
     )
-    boundary_ADE = lbm.BoundaryDict(
+    thermal_bc = lbm.BoundaryDict(
         [
-            lbm.BounceBackBoundary("ADE No-Slip Walls", (Y == 0) | (Y == ny - 1)),
-            lbm.DirichletBoundary("ADE Fixed Temperature Bottom Wall", (X == 0)),
-            lbm.DirichletBoundary("ADE Fixed Temperature Top Wall", (X == nx - 1)),
+            lbm.BounceBackBoundary("No-Slip Walls", (Y == 0) | (Y == ny - 1)),
+            lbm.InletBoundary("Left Wall", (X == 0)),
+            lbm.InletBoundary("Right Wall", (X == nx - 1)),
         ]
     )
-    bc_kwargs = {
-        "ADE Fixed Temperature Bottom Wall": {
-            "fixed_value": get_bottom_temperature(x=sim.y, t=0, nx=ny),
-        },
-        "ADE Fixed Temperature Top Wall": {
-            "fixed_value": 0.0,
-        },
+    fluid_bc_kwargs = {}
+    
+    thermal_bc_kwargs = {
+        "Left Wall": {"m": get_wall_temperature(0, sim.y)},
+        "Right Wall": {"m": 0.0},
     }
-    sim.set_boundary_conditions((boundary_NSE, boundary_ADE), bc_kwargs)
+    
+    sim.set_boundary_conditions(
+        (fluid_bc, thermal_bc),
+        (fluid_bc_kwargs, thermal_bc_kwargs),
+    )
     
     init_ncfile(nc_path, sim)
 
     for i in trange(steps):
         sim.step()
         
-        # Update the bottom wall temperature
-        sim.bc_kwargs["ADE Fixed Temperature Bottom Wall"][
-            "fixed_value"
-        ] = get_bottom_temperature(x=sim.y, t=sim.time, nx=ny)
+        # Update the left wall temperature
+        sim.bc_kwargs[1]["Left Wall"]["m"] = get_wall_temperature(sim.time, sim.y)
 
         if i % io_frequency == 0:
             

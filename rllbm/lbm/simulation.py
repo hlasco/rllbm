@@ -77,7 +77,7 @@ class Simulation:
             self.stream_mask,
         )
 
-        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, **bc_kwargs)
+        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, bc_kwargs)
 
         return dfs
 
