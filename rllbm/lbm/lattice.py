@@ -231,7 +231,8 @@ class ConvectionLattice(CoupledLattices):
             temperature (ArrayLike): The temperature of the fluid.
 
         Returns:
-            Tuple[Array]: The equilibrium distribution function for the fluid and thermal lattices.
+            Tuple[Array]: The equilibrium distribution function for the fluid and
+                thermal lattices.
         """
 
         fluid_eq = self[0].equilibrium(
@@ -294,15 +295,17 @@ class ConvectionLattice(CoupledLattices):
         gravity: ArrayLike,
         thermal_expansion: float,
     ) -> List[Tuple]:
-        """Compute the collision terms for the coupled NSE and ADE lattices.
+        """Compute the collision terms for the coupled fluid and thermal lattices.
 
         Args:
-            dist_functions (Tuple[ArrayLike]): The distribution functions for the NSE and ADE lattices.
+            dist_functions (Tuple[ArrayLike]): The distribution functions of the
+                fluid and thermal lattices.
             gravity (ArrayLike): The gravity.
             thermal_expansion (float): The thermal expansion coefficient.
 
         Returns:
-            Tuple[Tuple[Array], Tuple[Array]]: The equilibrium and force terms for the NSE and ADE lattices.
+            Tuple[Tuple[Array], Tuple[Array]]: The equilibrium and force terms for
+                the fluid and thermal lattices.
         """
         # Get the moments of the distribution functions
         density, velocity, temperature = self.get_macroscopics(dist_functions)
@@ -329,7 +332,8 @@ class ConvectionLattice(CoupledLattices):
         """Get the macroscopic quantities for the coupled NSE and ADE lattices.
 
         Args:
-            dist_functions (List[ArrayLike]): The distribution functions for the NSE and ADE lattices.
+            dist_functions (List[ArrayLike]): The distribution functions of the
+                fluid and thermal lattices.
 
         Returns:
             List[Array]: The macroscopic quantities for the NSE and ADE lattices.
