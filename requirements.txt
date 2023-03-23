@@ -9,3 +9,4 @@ dask
 pytest
 bokeh
 holoviews
+panel
