@@ -1,4 +1,4 @@
-from typing import Tuple, overload, List
+from typing import Tuple, Union, List
 from functools import partial
 
 from jax import numpy as jnp
@@ -62,7 +62,11 @@ def _stream_coupled(
 
 
 @partial(jit, static_argnums=(0))
-def stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Array:
+def stream(
+    lattice: Union[Lattice, CoupledLattices],
+    dist_function: Union[ArrayLike, List[ArrayLike]],
+    mask: Union[ArrayLike, List[ArrayLike]]
+)-> Union[Array, List[Array]]:
     """Apply the streaming step to the distribution function.
 
     Args:

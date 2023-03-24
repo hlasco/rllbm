@@ -15,7 +15,6 @@ class Lattice(abc.ABC, Stencil):
     _stencil: Stencil
     _shape: Tuple[int]
     _name: str = "BaseLattice"
-    _macroscopics: List[str] = []
 
     def __init__(self, stencil: Stencil, shape: Tuple[int]):
         self._stencil = stencil
@@ -93,7 +92,6 @@ class FluidLattice(Lattice):
 
     @partial(jit, static_argnums=(0))
     def equilibrium(self, m: ArrayLike, u: ArrayLike) -> Array:
-        u_shape = u.shape
         u_norm2 = (
             jnp.linalg.norm(
                 u,
@@ -103,14 +101,20 @@ class FluidLattice(Lattice):
             ** 2
         )
 
-        if len(u_shape) == 2:
+        if u.ndim == 2:
+            # Flattened array of velocities (Nxd)
             w = self.w[jnp.newaxis, :]
-            e_dot_u = jnp.einsum("dQ, Nd->NQ", self.e, u)
-        elif len(u_shape) == 3:
+            e_dot_u = jnp.einsum("dQ, Xd->XQ", self.e, u)
+        elif u.ndim == 3:
+            # 2D array of 2D velocities (XxYx2)
             w = self.w[jnp.newaxis, jnp.newaxis, :]
-            e_dot_u = jnp.einsum("dQ, NMd->NMQ", self.e, u)
+            e_dot_u = jnp.einsum("dQ, XYd->XYQ", self.e, u)
+        elif u.ndim == 4:
+            # 3D array of 3D velocities (XxYxZx3)
+            w = self.w[jnp.newaxis, jnp.newaxis, jnp.newaxis:]
+            e_dot_u = jnp.einsum("dQ, XYZd->XYZQ", self.e, u)
         else:
-            raise ValueError("velocity must be 2D or 3D array")
+            raise ValueError("velocity must be 2D,3D or 4D array")
 
         cs = self.cs
 

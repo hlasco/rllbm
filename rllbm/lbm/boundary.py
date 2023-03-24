@@ -200,8 +200,8 @@ class InletBoundary(Boundary):
         Args:
             lattice (Lattice): The lattice.
             dist_function (ArrayLike): The distribution function.
-            m (ArrayLike): The first moment of the distribution function.
-            u (ArrayLike): The second moment of the distribution function.
+            m (ArrayLike): The mean of the distribution function.
+            u (ArrayLike): The velocity of the distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
@@ -211,7 +211,7 @@ class InletBoundary(Boundary):
             m = m * jnp.ones((self._size))
         m = m[..., jnp.newaxis]
 
-        if u.shape == (2,):
+        if u.ndim == 1:
             u = jnp.ones((self._size, 2)) * u[jnp.newaxis, :]
 
         equilibrium = lattice.equilibrium(m, u)
@@ -276,11 +276,11 @@ class OutletBoundary(Boundary):
 
 @partial(jit, static_argnums=(0, 1))
 def apply_boundary_conditions(
-    lattice: Lattice,
-    boundary_dict: BoundaryDict,
-    dist_function: ArrayLike,
-    bc_kwargs,
-) -> Array:
+    lattice: Union[Lattice, CoupledLattices],
+    boundary_dict: Union[BoundaryDict, List[BoundaryDict]],
+    dist_function: Union[ArrayLike, List[ArrayLike]],
+    bc_kwargs: Union[dict, List[dict]],
+) -> Union[Array, List[Array]]:
     """Apply all the boundary conditions to the given distribution function.
 
     Args:
@@ -302,30 +302,4 @@ def apply_boundary_conditions(
                 lattice, boundary_dict, dist_function, bc_kwargs
             )
         ]
-
-
-@partial(jit, static_argnums=(0, 1))
-def apply_boundary_conditions_(
-    lattices: CoupledLattices,
-    boundary_dicts: List[BoundaryDict],
-    dist_functions: List[ArrayLike],
-    bc_kwargs: List[dict],
-) -> List[Array]:
-    """Apply all the boundary conditions to the given distribution functions.
-
-    Args:
-        lattice (CoupledLattices): The coupled lattices.
-        dist_functions (List[ArrayLike]): The distribution functions.
-        boundary_dicts (List[BoundaryDict]): The dictionaries of boundaries.
-        **bc_kwargs: Additional keyword arguments passed to the boundary conditions.
-
-    Returns:
-        List[Array]: The distribution functions after the application of the boundary
-            conditions.
-    """
-    return [
-        boundary_dict(lattice, dist_function, **kwargs)
-        for lattice, boundary_dict, dist_function, kwargs in zip(
-            lattices, boundary_dicts, dist_functions, bc_kwargs
-        )
-    ]
+        

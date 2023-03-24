@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Tuple, overload, List
+from typing import List, Union
 
 from jax import Array, jit
 from jax import numpy as jnp
@@ -44,8 +44,12 @@ def _collide(
 
 @partial(jit, static_argnums=(0))
 def collide(
-    lattice: Lattice, dist_function: ArrayLike, omega: float, mask: ArrayLike, **kwargs
-) -> Array:
+    lattice: Union[Lattice, CoupledLattices],
+    dist_function: Union[ArrayLike, List[ArrayLike]],
+    omega: Union[float, List[float]],
+    mask: Union[ArrayLike, List[ArrayLike]],
+    **kwargs
+) -> Union[Array, List[Array]]:
     """Collide the distribution function on the lattice defined in the Lattice object.
 
     Args:

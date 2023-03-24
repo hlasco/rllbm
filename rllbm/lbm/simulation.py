@@ -42,7 +42,7 @@ class Simulation:
         self.stream_mask = None
 
     def initialize(
-        self, lattice: Union[Lattice, CoupledLattices], dfs: ArrayLike
+        self, lattice: Union[Lattice, CoupledLattices], dfs: Union[ArrayLike, List[ArrayLike]]
     ) -> None:
         self.lattice = lattice
         self.dfs = dfs
