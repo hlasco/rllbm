@@ -1,16 +1,18 @@
 import abc
 from functools import partial
-from typing import List, Union, overload
+from typing import List, Union, overload, Tuple
 
 from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
+import jax
 
 __all__ = [
     "BounceBackBoundary",
     "InletBoundary",
+    "OutletBoundary",
     "BoundaryDict",
     "apply_boundary_conditions",
 ]
@@ -190,14 +192,14 @@ class InletBoundary(Boundary):
     def __call__(
         self,
         lattice: Lattice,
-        dist_funcion: ArrayLike,
-        m: Union[ArrayLike, float] = 0.0,
+        dist_function: ArrayLike,
+        m: Union[ArrayLike, float] = 1.0,
         u: ArrayLike = jnp.array([0.0, 0.0]),
     ) -> Array:
         """Apply the dirichlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
-            dist_funcion (ArrayLike): The distribution function.
+            dist_function (ArrayLike): The distribution function.
             m (ArrayLike): The first moment of the distribution function.
             u (ArrayLike): The second moment of the distribution function.
 
@@ -205,8 +207,7 @@ class InletBoundary(Boundary):
             Array: The distribution function after the application of the boundary
                 condition.
         """
-
-        if m.shape == ():
+        if isinstance(m, (int, float)):
             m = m * jnp.ones((self._size))
         m = m[..., jnp.newaxis]
 
@@ -216,13 +217,13 @@ class InletBoundary(Boundary):
         equilibrium = lattice.equilibrium(m, u)
 
         for i in range(lattice.Q):
-            dist_funcion = dist_funcion.at[self._mask, i].set(equilibrium[:, i])
-        return dist_funcion
+            dist_function = dist_function.at[self._mask, i].set(equilibrium[:, i])
+        return dist_function
 
     @property
     def collision_mask(self):
         # Collision is performed on all nodes except the boundary nodes.
-        return ~self._mask
+        return jnp.ones_like(~self._mask)
 
     @property
     def stream_mask(self):
@@ -230,13 +231,55 @@ class InletBoundary(Boundary):
         return ~self._mask
 
 
-@overload
+class OutletBoundary(Boundary):
+    """An inlet boundary condition. The distribution function is set to the
+    equilibrium distribution function on the boundary nodes. It can be used to model
+    an inlet.
+    """
+
+    def __init__(self, name, mask: ArrayLike, direction: Tuple[int]) -> None:
+        self.direction = -jnp.array(direction, dtype=jnp.int8)
+        self.neighbor_mask = jnp.roll(mask, shift=self.direction, axis=(0, 1))
+        super().__init__(name, mask)
+
+    @partial(jit, static_argnums=(0, 1))
+    def __call__(
+        self,
+        lattice: Lattice,
+        dist_function: ArrayLike,
+    ) -> Array:
+        """Apply the dirichlet boundary condition to the given distribution function.
+        Args:
+            lattice (Lattice): The lattice.
+            dist_function (ArrayLike): The distribution function.
+
+        Returns:
+            Array: The distribution function after the application of the boundary
+                condition.
+        """
+        for i in range(lattice.Q):
+            dist_function = dist_function.at[self._mask, i].set(
+                dist_function[self.neighbor_mask, i]
+            )
+        return dist_function
+
+    @property
+    def collision_mask(self):
+        # Collision is performed on all nodes.
+        return jnp.ones_like(~self._mask)
+
+    @property
+    def stream_mask(self):
+        # Streaming is performed on all nodes except the boundary nodes.
+        return ~self._mask
+
+
 @partial(jit, static_argnums=(0, 1))
 def apply_boundary_conditions(
     lattice: Lattice,
     boundary_dict: BoundaryDict,
     dist_function: ArrayLike,
-    **bc_kwargs,
+    bc_kwargs,
 ) -> Array:
     """Apply all the boundary conditions to the given distribution function.
 
@@ -250,11 +293,19 @@ def apply_boundary_conditions(
         Array: The distribution function after the application of the boundary
             conditions.
     """
-    return boundary_dict(lattice, dist_function, **bc_kwargs)
+    if isinstance(lattice, Lattice):
+        return boundary_dict(lattice, dist_function, **bc_kwargs)
+    else:
+        return [
+            boundary_dict(lattice, dist_function, **kwargs)
+            for lattice, boundary_dict, dist_function, kwargs in zip(
+                lattice, boundary_dict, dist_function, bc_kwargs
+            )
+        ]
 
 
 @partial(jit, static_argnums=(0, 1))
-def apply_boundary_conditions(
+def apply_boundary_conditions_(
     lattices: CoupledLattices,
     boundary_dicts: List[BoundaryDict],
     dist_functions: List[ArrayLike],

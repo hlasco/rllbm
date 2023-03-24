@@ -40,25 +40,8 @@ def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Arra
     return dist_function
 
 
-@overload
 @partial(jit, static_argnums=(0))
-def stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Array:
-    """Apply the streaming step to the distribution function.
-
-    Args:
-        lattice (Lattice): The lattice on which the streaming is performed.
-        dist_function (ArrayLike): The distribution function to be streamed.
-        mask (ArrayLike): The mask where the streaming should be performed.
-
-    Returns:
-        Array: The streamed distribution function.
-    """
-    dist_function = _stream(lattice, dist_function, mask)
-    return dist_function
-
-
-@partial(jit, static_argnums=(0))
-def stream(
+def _stream_coupled(
     lattices: CoupledLattices, dist_functions: List[ArrayLike], masks: Tuple[ArrayLike]
 ) -> Array:
     """Apply the streaming step to the distribution functions.
@@ -76,3 +59,22 @@ def stream(
         dist_functions[i] = _stream(lattices[i], dist_functions[i], masks[i])
 
     return dist_functions
+
+
+@partial(jit, static_argnums=(0))
+def stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Array:
+    """Apply the streaming step to the distribution function.
+
+    Args:
+        lattice (Lattice): The lattice on which the streaming is performed.
+        dist_function (ArrayLike): The distribution function to be streamed.
+        mask (ArrayLike): The mask where the streaming should be performed.
+
+    Returns:
+        Array: The streamed distribution function.
+    """
+    if isinstance(lattice, CoupledLattices):
+        dist_function = _stream_coupled(lattice, dist_function, mask)
+    else:
+        dist_function = _stream(lattice, dist_function, mask)
+    return dist_function

@@ -105,7 +105,7 @@ class FluidLattice(Lattice):
 
         if len(u_shape) == 2:
             w = self.w[jnp.newaxis, :]
-            e_dot_u = jnp.einsum("dQ, ND->NQ", self.e, u)
+            e_dot_u = jnp.einsum("dQ, Nd->NQ", self.e, u)
         elif len(u_shape) == 3:
             w = self.w[jnp.newaxis, jnp.newaxis, :]
             e_dot_u = jnp.einsum("dQ, NMd->NMQ", self.e, u)

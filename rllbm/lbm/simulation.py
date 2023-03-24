@@ -20,7 +20,7 @@ class Simulation:
         ny: int,
         dt: float,
         omegas: Union[List[float], float],
-        collision_kwargs: dict,
+        collision_kwargs: dict = {},
     ) -> None:
         self.nx = nx
         self.ny = ny
@@ -28,7 +28,7 @@ class Simulation:
         self.x = jnp.arange(nx)
         self.y = jnp.arange(ny)
         self.dt = dt
-        
+
         self.omegas = omegas
         self.collision_kwargs = collision_kwargs
 
@@ -41,12 +41,16 @@ class Simulation:
         self.collision_mask = None
         self.stream_mask = None
 
-    def initialize(self, lattice: Union[Lattice, CoupledLattices], dfs: ArrayLike) -> None:
+    def initialize(
+        self, lattice: Union[Lattice, CoupledLattices], dfs: ArrayLike
+    ) -> None:
         self.lattice = lattice
         self.dfs = dfs
         self.time = 0
 
-    def set_boundary_conditions(self, boundaries: BoundaryDict, bc_kwargs: dict) -> None:
+    def set_boundary_conditions(
+        self, boundaries: BoundaryDict, bc_kwargs: dict
+    ) -> None:
         self.boundaries = boundaries
         self.bc_kwargs = bc_kwargs
 
@@ -84,4 +88,3 @@ class Simulation:
     @partial(jit, static_argnums=(0))
     def get_macroscopics(self, dfs: ArrayLike) -> List[Array]:
         return self.lattice.get_macroscopics(dfs)
-

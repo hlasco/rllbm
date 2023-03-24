@@ -42,7 +42,6 @@ def _collide(
     )
 
 
-@overload
 @partial(jit, static_argnums=(0))
 def collide(
     lattice: Lattice, dist_function: ArrayLike, omega: float, mask: ArrayLike, **kwargs
@@ -60,44 +59,11 @@ def collide(
         Array: The new distribution function.
     """
     equilibrium, force = lattice.collision_terms(dist_function, **kwargs)
-    dist_function = _collide(dist_function, equilibrium, force, mask, omega)
-    return dist_function
-
-
-@partial(jit, static_argnums=(0))
-def collide(
-    lattices: CoupledLattices,
-    dist_function: List[ArrayLike],
-    omegas: Tuple[float],
-    masks: Tuple[jnp.array],
-    **kwargs
-) -> List[ArrayLike]:
-    """Collide the distribution functions on the lattices defined in the CoupledLattices
-    object.
-
-    This function performs a BKGK collision of a list of distribution functions. It
-    takes in the distribution functions, the equilibrium distributions, the forces, the
-    masks, and the relaxation parameters, and returns the new distribution functions.
-
-    Args:
-        lattices (CoupledLattices): The CoupledLattices object containing the lattices
-            to collide.
-        dist_function (List[ArrayLike]): The list of the distributions to
-            collide.
-        omegas (Tuple[float]): A tuple containing the relaxation frequencies for each
-            of the lattices in the CoupledLattices object.
-        masks (Tuple[jnp.array]): A tuple containing the masks for each of the lattices
-            in the CoupledLattices object.
-        **kwargs: Any additional keyword arguments to pass to the collision terms
-            function.
-
-    Returns:
-        List[ArrayLike]: A list containing the new distributions.
-    """
-    equilibiurm, force = lattices.collision_terms(dist_function, **kwargs)
-
-    for i in range(len(omegas)):
-        dist_function[i] = _collide(
-            dist_function[i], equilibiurm[i], force[i], masks[i], omegas[i]
-        )
+    if isinstance(lattice, Lattice):
+        dist_function = _collide(dist_function, equilibrium, force, mask, omega)
+    else:
+        for i in range(len(omega)):
+            dist_function[i] = _collide(
+                dist_function[i], equilibrium[i], force[i], mask[i], omega[i]
+            )
     return dist_function
