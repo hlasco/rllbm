@@ -42,7 +42,9 @@ class Simulation:
         self.stream_mask = None
 
     def initialize(
-        self, lattice: Union[Lattice, CoupledLattices], dfs: Union[ArrayLike, List[ArrayLike]]
+        self,
+        lattice: Union[Lattice, CoupledLattices],
+        dfs: Union[ArrayLike, List[ArrayLike]],
     ) -> None:
         self.lattice = lattice
         self.dfs = dfs
@@ -67,6 +69,8 @@ class Simulation:
 
     @partial(jit, static_argnums=(0))
     def _step(self, dfs: ArrayLike, bc_kwargs: dict) -> Array:
+        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, bc_kwargs)
+
         dfs = collide(
             self.lattice,
             dfs,
@@ -75,13 +79,7 @@ class Simulation:
             **self.collision_kwargs,
         )
 
-        dfs = stream(
-            self.lattice,
-            dfs,
-            self.stream_mask,
-        )
-
-        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, bc_kwargs)
+        dfs = stream(self.lattice, dfs, self.stream_mask)
 
         return dfs
 

@@ -6,7 +6,7 @@ from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
-from rllbm.lbm.lattice import Lattice, CoupledLattices
+from rllbm.lbm.lattice import Stencil, Lattice, CoupledLattices
 import jax
 
 __all__ = [
@@ -32,7 +32,7 @@ class Boundary(abc.ABC):
     def __call__(
         self, lattice: Lattice, dist_function: ArrayLike, *args, **kwargs
     ) -> ArrayLike:
-        """Apply all the boundary condition to the given distribution function.
+        """Apply the boundary condition to the given distribution function.
 
         Args:
             lattice (Lattice): The lattice.
@@ -196,7 +196,7 @@ class InletBoundary(Boundary):
         m: Union[ArrayLike, float] = 1.0,
         u: ArrayLike = jnp.array([0.0, 0.0]),
     ) -> Array:
-        """Apply the dirichlet boundary condition to the given distribution function.
+        """Apply the inlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
             dist_function (ArrayLike): The distribution function.
@@ -212,7 +212,7 @@ class InletBoundary(Boundary):
         m = m[..., jnp.newaxis]
 
         if u.ndim == 1:
-            u = jnp.ones((self._size, 2)) * u[jnp.newaxis, :]
+            u = jnp.ones((self._size, lattice.D)) * u[jnp.newaxis, :]
 
         equilibrium = lattice.equilibrium(m, u)
 
@@ -222,7 +222,7 @@ class InletBoundary(Boundary):
 
     @property
     def collision_mask(self):
-        # Collision is performed on all nodes except the boundary nodes.
+        # Collision is performed on all nodes
         return jnp.ones_like(~self._mask)
 
     @property
@@ -232,14 +232,11 @@ class InletBoundary(Boundary):
 
 
 class OutletBoundary(Boundary):
-    """An inlet boundary condition. The distribution function is set to the
-    equilibrium distribution function on the boundary nodes. It can be used to model
-    an inlet.
-    """
+    """An outlet boundary condition."""
 
     def __init__(self, name, mask: ArrayLike, direction: Tuple[int]) -> None:
-        self.direction = -jnp.array(direction, dtype=jnp.int8)
-        self.neighbor_mask = jnp.roll(mask, shift=self.direction, axis=(0, 1))
+        self.direction = jnp.array(direction, dtype=jnp.int8)
+        self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
         super().__init__(name, mask)
 
     @partial(jit, static_argnums=(0, 1))
@@ -248,7 +245,7 @@ class OutletBoundary(Boundary):
         lattice: Lattice,
         dist_function: ArrayLike,
     ) -> Array:
-        """Apply the dirichlet boundary condition to the given distribution function.
+        """Apply the outlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
             dist_function (ArrayLike): The distribution function.
@@ -257,16 +254,16 @@ class OutletBoundary(Boundary):
             Array: The distribution function after the application of the boundary
                 condition.
         """
+        m, u = lattice.get_macroscopics(dist_function[self.neighbor_mask, :])
+        dist_ = lattice.equilibrium(m, u)
         for i in range(lattice.Q):
-            dist_function = dist_function.at[self._mask, i].set(
-                dist_function[self.neighbor_mask, i]
-            )
+            dist_function = dist_function.at[self._mask, i].set(dist_[:, i])
         return dist_function
 
     @property
     def collision_mask(self):
         # Collision is performed on all nodes.
-        return jnp.ones_like(~self._mask)
+        return ~self._mask
 
     @property
     def stream_mask(self):
@@ -297,9 +294,6 @@ def apply_boundary_conditions(
         return boundary_dict(lattice, dist_function, **bc_kwargs)
     else:
         return [
-            boundary_dict(lattice, dist_function, **kwargs)
-            for lattice, boundary_dict, dist_function, kwargs in zip(
-                lattice, boundary_dict, dist_function, bc_kwargs
-            )
+            bdy(l, df, **kw)
+            for l, bdy, df, kw in zip(lattice, boundary_dict, dist_function, bc_kwargs)
         ]
-        

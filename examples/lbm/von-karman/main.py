@@ -62,21 +62,21 @@ if __name__ == "__main__":
     nc_path = "outputs.nc"
 
     # Simulation parameters
-    nx = 256
+    nx = 512
     ny = 128
     mach = 0.05
     re = 150
 
-    cyl_r = ny / 8
-    cyl_x = nx / 5
-    cyl_y = ny / 2
+    obs_size = ny / 8
+    obs_x = nx / 5
+    obs_y = ny / 2
 
     # strouhal number
     st = 0.198 * (1.0 - 19.7 / re)
     v0 = mach * jnp.sqrt(3)
-    vortex_period = cyl_r / (st * v0 * ny)
+    vortex_period = obs_size / (st * v0 * ny)
 
-    viscosity = (v0 * cyl_r) / re
+    viscosity = (v0 * obs_size * 2) / re
     omega = 1.0 / (3 * viscosity + 0.5)
 
     dx = 1.0 / (max(nx, ny))
@@ -106,7 +106,7 @@ if __name__ == "__main__":
     )
     sim.initialize(lattice, dfs)
 
-    obstacle_mask = jnp.sqrt((X - cyl_x) ** 2 + (Y - cyl_y) ** 2) < cyl_r
+    obstacle_mask = (jnp.fabs(X - obs_x) < obs_size) & (jnp.fabs(Y - obs_y) < obs_size)
     # Set the boundary conditions
     fluid_bc = lbm.BoundaryDict(
         [
@@ -121,7 +121,7 @@ if __name__ == "__main__":
     fluid_bc_kwargs = {
         "Left": {
             "m": 1.0,
-            "u": get_wall_velocity(sim.y, amp=v0, direction=0),  #
+            "u": get_wall_velocity(sim.y, amp=v0, direction=0),
         },
     }
 

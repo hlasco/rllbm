@@ -32,8 +32,6 @@ img = hv.DynamicMap(curl_image, streams=[stream]).opts(
         clim=(-5, 5),
         xlim=(xmin, xmax),
         ylim=(ymin, ymax),
-        ylabel="",
-        yticks=0,
         colorbar=True,
         colorbar_position="right",
         colorbar_opts={"title": "Vorticity"},
@@ -69,4 +67,4 @@ app = pn.Column(
 )
 
 if __name__ == "__main__":
-    pn.serve(app, start=True, show=True)
+    pn.serve(app, start=True, show=False, port=48070)
