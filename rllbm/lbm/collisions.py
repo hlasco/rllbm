@@ -64,6 +64,13 @@ def collide(
     """
     equilibrium, force = lattice.collision_terms(dist_function, **kwargs)
     if isinstance(lattice, Lattice):
+        # Smagorinsky sgs model
+        # m, u = lattice.get_macroscopics(dist_function)
+        # dudx, dudy = jnp.gradient(u[..., 0])
+        # dvdx, dvdy = jnp.gradient(u[..., 1])
+        # nu_sgs = 0.2**2 * jnp.sqrt(2 * dudx**2 + (dudy + dvdx)**2 + dvdy**2)
+        # omega = (omega / (1.0 + 3 * omega * nu_sgs))[..., jnp.newaxis]
+
         dist_function = _collide(dist_function, equilibrium, force, mask, omega)
     else:
         for i in range(len(omega)):
