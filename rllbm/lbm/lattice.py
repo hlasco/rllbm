@@ -258,6 +258,7 @@ class ConvectionLattice(CoupledLattices):
         density: ArrayLike,
         gravity: ArrayLike,
         thermal_expansion: float,
+        timestep: float,
     ) -> Tuple[Array]:
         """Computes the force on the fluid due to gravity.
 
@@ -278,7 +279,7 @@ class ConvectionLattice(CoupledLattices):
             jnp.newaxis, jnp.newaxis, :
         ]
 
-        scalar = 1.0 / stencil.cs**2 * thermal_expansion
+        scalar = timestep / stencil.cs**2 * thermal_expansion
 
         # Compute the force
         fluid_force = (
@@ -298,6 +299,7 @@ class ConvectionLattice(CoupledLattices):
         dist_functions: List[ArrayLike],
         gravity: ArrayLike,
         thermal_expansion: float,
+        timestep: float,
     ) -> List[Tuple]:
         """Compute the collision terms for the coupled fluid and thermal lattices.
 
@@ -327,6 +329,7 @@ class ConvectionLattice(CoupledLattices):
             density=density,
             gravity=gravity,
             thermal_expansion=thermal_expansion,
+            timestep=timestep,
         )
 
         return equilibrium, force

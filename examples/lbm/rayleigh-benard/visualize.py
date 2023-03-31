@@ -41,7 +41,7 @@ img = hv.DynamicMap(temp_image, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
         symmetric=True,
-        clim=(-0.1, 0.1),
+        clim=(-0.05, 0.05),
         xlim=(xmin, xmax),
         ylim=(ymin, ymax),
         ylabel="",
@@ -93,4 +93,4 @@ app = pn.Column(
 )
 
 if __name__ == "__main__":
-    pn.serve(app, start=True, show=True)
+    pn.serve(app, start=True, show=False, port=48070)

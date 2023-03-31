@@ -50,7 +50,7 @@ def init_ncfile(path, sim):
             "f4",
             ("time", "nx", "ny"),
             compression="zlib",
-            least_significant_digit=3,
+            least_significant_digit=4,
         ),
 
         ncfile.variables["x"][:] = sim.x * sim.dx
@@ -68,28 +68,29 @@ if __name__ == "__main__":
     nc_path = "outputs.nc"
 
     # Simulation parameters
-    nx = 128
-    ny = 128
+    nx = 256
+    ny = 256
+
+    dx = 1.0 / (max(nx, ny))
+    dt = dx ** 0.5
 
     prandtl = 0.71
-    rayleigh = 1e9
-    thermal_expansion = 0.0005
+    rayleigh = 1e11
+    thermal_expansion = 0.005
     gravity = 9.81
     buoyancy = gravity * thermal_expansion
 
-    dx = 1.0 / (max(nx, ny))
-    dt = (buoyancy * dx) ** 0.5
-    
-    # The run time in code units
-    run_time = 100.0
+    # Collision parameters
+    viscosity = (buoyancy * prandtl / rayleigh)**0.5 * dt / dx**2
+    kappa = viscosity / prandtl
+
+    convection_timescale = 1.0 / buoyancy
+    run_time = 100 * convection_timescale
     # Number of steps to run
     steps = int(run_time / dt)
     # Frequency of writing to the netCDF file
-    io_frequency = int(1.0 / dt)
+    io_frequency = int(convection_timescale / dt)
 
-    # Collision parameters
-    viscosity = (prandtl / rayleigh) ** 0.5 * dt / dx**2
-    kappa = 1.0 / (prandtl * rayleigh) ** 0.5 * dt / dx**2
     omegas = (
         1.0 / (3 * viscosity + 0.5),
         1.0 / (3 * kappa + 0.5),
@@ -98,6 +99,7 @@ if __name__ == "__main__":
     # ConvectionLattice needs to know those parameters in order to calculate the
     # collision terms
     collision_kwargs = {
+        "timestep": dt,
         "gravity": jnp.array([0, gravity]),
         "thermal_expansion": thermal_expansion,
     }
@@ -155,7 +157,7 @@ if __name__ == "__main__":
         sim.step()
         
         # Update the left wall temperature
-        sim.bc_kwargs[1]["Left Wall"]["m"] = get_wall_temperature(sim.time, sim.y)
+        sim.bc_kwargs[1]["Left Wall"]["m"] = get_wall_temperature(sim.time / convection_timescale, sim.y)
 
         if i % io_frequency == 0:
             

@@ -69,7 +69,6 @@ class Simulation:
 
     @partial(jit, static_argnums=(0))
     def _step(self, dfs: ArrayLike, bc_kwargs: dict) -> Array:
-        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, bc_kwargs)
 
         dfs = collide(
             self.lattice,
@@ -80,6 +79,8 @@ class Simulation:
         )
 
         dfs = stream(self.lattice, dfs, self.stream_mask)
+
+        dfs = apply_boundary_conditions(self.lattice, self.boundaries, dfs, bc_kwargs)
 
         return dfs
 
