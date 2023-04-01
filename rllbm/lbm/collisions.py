@@ -1,23 +1,26 @@
 from functools import partial
-from typing import List, Union
+from collections.abc import Iterable
 
-from jax import Array, jit
+from multipledispatch import dispatch
+from typing import Sequence, Union
+
+import chex
+import jax
 from jax import numpy as jnp
-from jax.typing import ArrayLike
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = ["collide"]
 
 
-@jit
+@jax.jit
 def _collide(
-    dist_function: ArrayLike,
-    equilibrium: ArrayLike,
-    force: ArrayLike,
-    mask: ArrayLike,
-    omega: float,
-) -> Array:
+    dist_function: chex.Array,
+    equilibrium: chex.Array,
+    force: chex.Array,
+    mask: chex.Array,
+    omega: Union[chex.Scalar, chex.Array],
+) -> chex.Array:
     """Perform a BKG collision step.
 
     This function performs a BKGK collision of a single density function. It takes in
@@ -26,11 +29,11 @@ def _collide(
     function.
 
     Args:
-        dist_function (ArrayLike): The distribution function to be collided.
-        equilibrium (ArrayLike): The equilibrium distribution.
-        force (ArrayLike): The force distribution.
-        mask (ArrayLike): The mask where the collision should be performed.
-        omega (float): The relaxation parameter.
+        dist_function (chex.Array): The distribution function to be collided.
+        equilibrium (chex.Array): The equilibrium distribution.
+        force (chex.Array): The force distribution.
+        mask (chex.Array): The mask where the collision should be performed.
+        omega (Union[chex.Scalar, chex.Array]): The relaxation parameter.
 
     Returns:
         Array: The new distribution function after collision
@@ -40,41 +43,56 @@ def _collide(
         dist_function - omega * (dist_function - equilibrium) + force,
         dist_function,
     )
-
-
-@partial(jit, static_argnums=(0))
+    
+@dispatch(Lattice, jax.Array, (jax.Array, float),  jax.Array)
+@partial(jax.jit, static_argnums=(0))
 def collide(
-    lattice: Union[Lattice, CoupledLattices],
-    dist_function: Union[ArrayLike, List[ArrayLike]],
-    omega: Union[float, List[float]],
-    mask: Union[ArrayLike, List[ArrayLike]],
+    lattice: Lattice,
+    dist_function: chex.Array,
+    omega: chex.Scalar,
+    mask: chex.Array,
     **kwargs
-) -> Union[Array, List[Array]]:
+) -> Union[chex.Array, Sequence[chex.Array]]:
     """Collide the distribution function on the lattice defined in the Lattice object.
 
     Args:
         lattice (Lattice): The Lattice object containing the lattice to collide.
-        dist_function (ArrayLike): The distribution function to collide.
+        dist_function (chex.Array): The distribution function to collide.
         omega (float): The relaxation frequency.
-        mask (ArrayLike): The mask where the collision should be performed.
+        mask (chex.Array): The mask where the collision should be performed.
         **kwargs: Any additional keyword arguments to pass to the collision terms
             function.
     Returns:
-        Array: The new distribution function.
+        chex.Array: The new distribution function.
     """
     equilibrium, force = lattice.collision_terms(dist_function, **kwargs)
-    if isinstance(lattice, Lattice):
-        # Smagorinsky sgs model
-        # m, u = lattice.get_macroscopics(dist_function)
-        # dudx, dudy = jnp.gradient(u[..., 0])
-        # dvdx, dvdy = jnp.gradient(u[..., 1])
-        # nu_sgs = 0.2**2 * jnp.sqrt(2 * dudx**2 + (dudy + dvdx)**2 + dvdy**2)
-        # omega = (omega / (1.0 + 3 * omega * nu_sgs))[..., jnp.newaxis]
+    dist_function = _collide(dist_function, equilibrium, force, mask, omega)
 
-        dist_function = _collide(dist_function, equilibrium, force, mask, omega)
-    else:
-        for i in range(len(omega)):
-            dist_function[i] = _collide(
-                dist_function[i], equilibrium[i], force[i], mask[i], omega[i]
-            )
+
+@dispatch(CoupledLattices, Iterable, Iterable, Iterable)
+@partial(jax.jit, static_argnums=(0))
+def collide(
+    lattice: CoupledLattices,
+    dist_function: Sequence[chex.Array],
+    omega: Sequence[chex.Scalar],
+    mask: Sequence[chex.Array],
+    **kwargs
+) -> Sequence[chex.Array]:
+    """Collide the distribution function on the lattice defined in the Lattice object.
+
+    Args:
+        lattice (CoupledLattices): The Lattice object containing the lattice to collide.
+        dist_function (Sequence[chex.Array]): The distribution function to collide.
+        omega (Sequence[chex.Scalar]): The relaxation frequency.
+        mask (Sequence[chex.Array]): The mask where the collision should be performed.
+        **kwargs: Any additional keyword arguments to pass to the collision terms
+            function.
+    Returns:
+        Sequence[chex.Array]: The new distribution function.
+    """
+    equilibrium, force = lattice.collision_terms(dist_function, **kwargs)
+    for i in range(len(omega)):
+        dist_function[i] = _collide(
+            dist_function[i], equilibrium[i], force[i], mask[i], omega[i]
+        )
     return dist_function

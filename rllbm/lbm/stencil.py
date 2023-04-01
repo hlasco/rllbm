@@ -1,17 +1,18 @@
 import string
 from functools import partial
 
+import chex
+import jax
+
 from jax import numpy as jnp
-from jax.typing import ArrayLike
-from jax import Array, jit
 
 __all__ = ["Stencil", "D1Q3", "D2Q5", "D2Q9"]
 
 
 class Stencil:
-    e: ArrayLike = jnp.array([])
-    w: ArrayLike = jnp.array([])
-    opposite: ArrayLike = jnp.array([])
+    e: chex.Array = jnp.array([])
+    w: chex.Array = jnp.array([])
+    opposite: chex.Array = jnp.array([])
     cs: float = 0.0
 
     @classmethod
@@ -25,8 +26,8 @@ class Stencil:
         return cls.e.shape[1]
 
     @classmethod
-    @partial(jit, static_argnums=(0, 2))
-    def get_moment(cls, dist_function: ArrayLike, order: int) -> Array:
+    @partial(jax.jit, static_argnums=(0, 2))
+    def get_moment(cls, dist_function: chex.Array, order: int) -> chex.Array:
         """Returns the moment of the distribution function.
         """
         dim = len(dist_function.shape) - 1

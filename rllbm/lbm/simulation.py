@@ -1,11 +1,12 @@
 from functools import partial
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Tuple, List, Union
+from typing import Union, Sequence
 
-from jax import Array, jit
+import chex
+
+from jax import jit
 from jax import numpy as jnp
-from jax.typing import ArrayLike
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
 from rllbm.lbm.collisions import collide
@@ -16,8 +17,8 @@ __all__ = ["Domain", "Simulation"]
 
 @dataclass
 class Domain:
-    shape: Tuple[int]
-    bounds: Tuple[float]
+    shape: Sequence[int]
+    bounds: Sequence[float]
     
     def __post_init__(self):
         self.dim = len(self.shape)
@@ -67,7 +68,7 @@ class Simulation:
     def __init__(
         self,
         domain: Domain,
-        omegas: Union[List[float], float],
+        omegas: Union[Sequence[chex.Scalar], chex.Scalar],
         collision_kwargs: dict = {},
     ) -> None:
         self._domain = domain
@@ -86,6 +87,13 @@ class Simulation:
     def domain(self):
         return self._domain
     
+    @property
+    def is_initialized(self) -> bool:
+        for attr in ["dfs", "lattice", "boundaries", "bc_kwargs", "collision_mask", "stream_mask"]:
+            if getattr(self, attr) is None:
+                return False
+        return True
+    
     def __getattr__(self, name):
         try:
             return getattr(self._domain, name)
@@ -93,13 +101,15 @@ class Simulation:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def initialize(
-        self, lattice: Union[Lattice, CoupledLattices], dfs: Union[ArrayLike, List[ArrayLike]],
+        self, lattice: Union[Lattice, CoupledLattices], dfs: Union[chex.Array, Sequence[chex.Array]],
     ) -> None:
         self.lattice = lattice
         self.dfs = dfs
 
     def set_boundary_conditions(
-        self, boundaries: Union[BoundaryDict, List[BoundaryDict]], bc_kwargs: Union[dict, List[dict]]
+        self,
+        boundaries: Union[BoundaryDict, Sequence[BoundaryDict]],
+        bc_kwargs: Union[dict, Sequence[dict]]
     ) -> None:
         self.boundaries = boundaries
         self.bc_kwargs = bc_kwargs
@@ -116,8 +126,10 @@ class Simulation:
 
     @partial(jit, static_argnums=(0))
     def _step(
-        self, dfs: Union[ArrayLike, List[ArrayLike]], bc_kwargs: Union[dict, List[dict]]
-    ) -> Union[Array, List[Array]]:
+        self,
+        dfs: Union[chex.Array, Sequence[chex.Array]],
+        bc_kwargs: Union[dict, Sequence[dict]]
+    ) -> Union[chex.Array, Sequence[chex.Array]]:
 
         dfs = collide(
             self.lattice,
@@ -134,5 +146,5 @@ class Simulation:
         return dfs
 
     @partial(jit, static_argnums=(0))
-    def get_macroscopics(self, dfs: ArrayLike) -> List[Array]:
+    def get_macroscopics(self, dfs: Union[chex.Array, Sequence[chex.Array]]) -> Sequence[chex.Array]:
         return self.lattice.get_macroscopics(dfs)

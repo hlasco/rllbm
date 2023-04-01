@@ -1,17 +1,18 @@
-from typing import Tuple, Union, List
+from typing import Union, Sequence
 from functools import partial
 
+import chex
+import jax
+
 from jax import numpy as jnp
-from jax.typing import ArrayLike
-from jax import Array, jit
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = ["stream"]
 
 
-@partial(jit, static_argnums=(0))
-def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Array:
+@partial(jax.jit, static_argnums=(0))
+def _stream(lattice: Lattice, dist_function: chex.Array, mask: chex.Array,) -> chex.Array:
     """This function takes in a distribution function, and a mask, and streams the
     distribution function according to the mask.
     The mask allows to stream the distribution function only on the fluid nodes, and not
@@ -19,8 +20,8 @@ def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Arra
 
     Args:
         lattice (Lattice): The lattice on which the streaming is performed.
-        dist_function (ArrayLike): The distribution function to be streamed.
-        mask (ArrayLike): The mask where the streaming should be performed.
+        dist_function (chex.Array,): The distribution function to be streamed.
+        mask (chex.Array,): The mask where the streaming should be performed.
 
     Returns:
         Array: The streamed distribution function.
@@ -40,16 +41,16 @@ def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Arra
     return dist_function
 
 
-@partial(jit, static_argnums=(0))
+@partial(jax.jit, static_argnums=(0))
 def _stream_coupled(
-    lattices: List[Lattice], dist_functions: List[ArrayLike], masks: List[ArrayLike]
-) -> Array:
+    lattices: Sequence[Lattice], dist_functions: Sequence[chex.Array], masks: Sequence[chex.Array]
+) -> chex.Array:
     """Apply the streaming step to the distribution functions.
 
     Args:
         lattices (CoupledLattices): The coupled lattices on which the streaming is performed.
-        dist_functions (List[ArrayLike]): The distribution functions to be streamed.
-        masks (List[ArrayLike]): The masks where the streaming should be performed.
+        dist_functions (Sequence[ArrayLike]): The distribution functions to be streamed.
+        masks (Sequence[ArrayLike]): The masks where the streaming should be performed.
 
     Returns:
         Array: The streamed distribution functions.
@@ -61,12 +62,12 @@ def _stream_coupled(
     return dist_functions
 
 
-@partial(jit, static_argnums=(0))
+@partial(jax.jit, static_argnums=(0))
 def stream(
     lattice: Union[Lattice, CoupledLattices],
-    dist_function: Union[ArrayLike, List[ArrayLike]],
-    mask: Union[ArrayLike, List[ArrayLike]]
-)-> Union[Array, List[Array]]:
+    dist_function: Union[chex.Array, Sequence[chex.Array]],
+    mask: Union[chex.Array, Sequence[chex.Array]]
+)-> Union[chex.Array, Sequence[chex.Array]]:
     """Apply the streaming step to the distribution function.
 
     Args:

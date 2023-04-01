@@ -1,11 +1,15 @@
 import abc
 from collections.abc import Iterable
-from functools import partial
-from typing import List, Union, Tuple
 
-from jax import Array, jit
+from functools import partial
+from multipledispatch import dispatch
+
+from typing import Union, Sequence
+
+import chex
+import jax
+
 from jax import numpy as jnp
-from jax.typing import ArrayLike
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
 
@@ -19,27 +23,27 @@ __all__ = [
 
 
 class Boundary(abc.ABC):
-    _mask: ArrayLike
-    _nane: str
+    _name: str
+    _mask: chex.Array
     _size: int
 
-    def __init__(self, name: str, mask: ArrayLike) -> None:
+    def __init__(self, name: str, mask: chex.Array) -> None:
         self._name = name
         self._mask = mask
         self._size = jnp.sum(mask, dtype=jnp.int32)
 
     @abc.abstractmethod
     def __call__(
-        self, lattice: Lattice, dist_function: ArrayLike, *args, **kwargs
-    ) -> ArrayLike:
+        self, lattice: Lattice, dist_function: chex.Array, *args, **kwargs
+    ) -> chex.Array:
         """Apply the boundary condition to the given distribution function.
 
         Args:
             lattice (Lattice): The lattice.
-            dist_function (ArrayLike): The distribution function.
+            dist_function (chex.Array): The distribution function.
 
         Returns:
-            ArrayLike: The distribution function after the application of the
+            chex.Array: The distribution function after the application of the
                 boundary condition.
         """
         pass
@@ -68,34 +72,39 @@ class Boundary(abc.ABC):
 class BoundaryDict:
     _boundary_dict: dict
 
-    def __init__(self, boundary: Union[Boundary, List[Boundary]] = None):
+    def __init__(self):
         self._boundary_dict = {}
-        if boundary is not None:
-            self.add(boundary)
 
-    def add(self, boundary: Union[Boundary, List[Boundary]]) -> None:
+    @dispatch(Boundary)
+    def add(self, boundary: Boundary) -> None:
         """Add a boundary to the list of boundaries.
 
         Args:
-            boundary (Union[Boundary, List[Boundary]]): The boundaries to add.
+            boundary (Union[Boundary, Sequence[Boundary]]): The boundaries to add.
         """
-        if isinstance(boundary, Iterable):
-            for bdy in boundary:
-                if bdy.name in self._boundary_dict:
-                    raise ValueError(f"Boundary {bdy.name} already exists.")
-                self._boundary_dict[bdy.name] = bdy
-        else:
-            if boundary.name in self._boundary_dict:
-                raise ValueError(f"Boundary {boundary.name} already exists.")
-            self._boundary_dict[boundary.name] = boundary
+        if boundary.name in self._boundary_dict:
+            raise ValueError(f"Boundary {boundary.name} already exists.")
+        self._boundary_dict[boundary.name] = boundary
+            
+    @dispatch(Iterable)
+    def add(self, boundary: Sequence[Boundary]) -> None:
+        """Add a boundary to the list of boundaries.
 
-    @partial(jit, static_argnums=(0, 1))
-    def __call__(self, lattice: Lattice, dist_function: ArrayLike, **kwargs) -> Array:
+        Args:
+            boundary (Sequence[Boundary]): The boundaries to add.
+        """
+        for bdy in boundary:
+            if bdy.name in self._boundary_dict:
+                raise ValueError(f"Boundary {bdy.name} already exists.")
+            self._boundary_dict[bdy.name] = bdy
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def __call__(self, lattice: Lattice, dist_function: chex.Array, **kwargs) -> chex.Array:
         """Apply all the boundary conditions to the given distribution function.
 
         Args:
             lattice (Lattice): The lattice.
-            dist_function (ArrayLike): The distribution function.
+            dist_function (chex.Array): The distribution function.
             **kwargs: Additional keyword arguments passed to the boundary conditions.
 
         Returns:
@@ -110,7 +119,7 @@ class BoundaryDict:
         return dist_function
 
     @property
-    def collision_mask(self) -> Array:
+    def collision_mask(self) -> chex.Array:
         """Return the mask of fluid nodes on which the collision step is performed. The
         mask corresponds to the logical AND of the collision masks of all the
         boundaries.
@@ -124,12 +133,12 @@ class BoundaryDict:
         return jnp.prod(masks, dtype=bool, axis=0)
 
     @property
-    def stream_mask(self) -> Array:
+    def stream_mask(self) -> chex.Array:
         """Return the mask of fluid nodes on which the streaming step is performed. The
         mask corresponds to the logical AND of the stream masks of all the boundaries.
 
         Returns:
-            Array: The stream mask.
+            chex.Array: The stream mask.
         """
         masks = jnp.array(
             [b.stream_mask for b in self._boundary_dict.values()], dtype=bool
@@ -143,20 +152,20 @@ class BounceBackBoundary(Boundary):
     solid wall.
     """
 
-    def __init__(self, name: str, mask: ArrayLike) -> None:
+    def __init__(self, name: str, mask: chex.Array) -> None:
         super().__init__(name, mask)
 
-    @partial(jit, static_argnums=(0, 1))
+    @partial(jax.jit, static_argnums=(0, 1))
     def __call__(
         self,
         lattice: Lattice,
-        dist_function: ArrayLike,
-    ) -> Array:
+        dist_function: chex.Array,
+    ) -> chex.Array:
         """Apply the bounce back boundary condition to the given distribution function.
 
         Args:
             lattice (Lattice): The lattice.
-            dist_function (ArrayLike): The distribution function.
+            dist_function (chex.Array): The distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
@@ -185,29 +194,29 @@ class InletBoundary(Boundary):
     an inlet.
     """
 
-    def __init__(self, name, mask: ArrayLike) -> None:
+    def __init__(self, name, mask: chex.Array) -> None:
         super().__init__(name, mask)
 
-    @partial(jit, static_argnums=(0, 1))
+    @partial(jax.jit, static_argnums=(0, 1))
     def __call__(
         self,
         lattice: Lattice,
-        dist_function: ArrayLike,
-        m: Union[ArrayLike, float] = 1.0,
-        u: ArrayLike = jnp.array([0.0, 0.0]),
-    ) -> Array:
+        dist_function: chex.Array,
+        m: Union[chex.Array, chex.Scalar] = 1.0,
+        u: chex.Array = jnp.array([0.0, 0.0]),
+    ) -> chex.Array:
         """Apply the inlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
-            dist_function (ArrayLike): The distribution function.
-            m (ArrayLike): The mean of the distribution function.
-            u (ArrayLike): The velocity of the distribution function.
+            dist_function (chex.Array): The distribution function.
+            m (chex.Array): The mean of the distribution function.
+            u (chex.Array): The velocity of the distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
                 condition.
         """
-        if isinstance(m, (int, float)):
+        if isinstance(m, chex.Scalar):
             m = m * jnp.ones((self._size))
         m = m[..., jnp.newaxis]
 
@@ -234,17 +243,17 @@ class InletBoundary(Boundary):
 class OutletBoundary(Boundary):
     """An outlet boundary condition."""
 
-    def __init__(self, name, mask: ArrayLike, direction: Tuple[int]) -> None:
+    def __init__(self, name, mask: chex.Array, direction: Sequence[int]) -> None:
         self.direction = jnp.array(direction, dtype=jnp.int8)
         self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
         super().__init__(name, mask)
 
-    @partial(jit, static_argnums=(0, 1))
-    def __call__(self, lattice: Lattice, dist_function: ArrayLike) -> Array:
+    @partial(jax.jit, static_argnums=(0, 1))
+    def __call__(self, lattice: Lattice, dist_function: chex.Array) -> chex.Array:
         """Apply the outlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
-            dist_function (ArrayLike): The distribution function.
+            dist_function (chex.Array): The distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
@@ -266,31 +275,51 @@ class OutletBoundary(Boundary):
         # Streaming is performed on all nodes except the boundary nodes.
         return ~self._mask
 
-
-@partial(jit, static_argnums=(0, 1))
+@dispatch(Lattice, BoundaryDict, jax.Array, dict)
+@partial(jax.jit, static_argnums=(0, 1))
 def apply_boundary_conditions(
-    lattice: Union[Lattice, CoupledLattices],
-    boundary_dict: Union[BoundaryDict, List[BoundaryDict]],
-    dist_function: Union[ArrayLike, List[ArrayLike]],
-    bc_kwargs: Union[dict, List[dict]],
-) -> Union[Array, List[Array]]:
+    lattice: Lattice,
+    boundary_dict: BoundaryDict,
+    dist_function: chex.Array,
+    bc_kwargs: dict,
+) -> chex.Array:
     """Apply all the boundary conditions to the given distribution function.
 
     Args:
         lattice (Lattice): The lattice.
-        dist_function (ArrayLike): The distribution function.
         boundary_dict (BoundaryDict): The dictionary of boundaries.
-        dist_function (ArrayLike): The distribution function.
-        **bc_kwargs: Additional keyword arguments passed to the boundary conditions.
+        dist_function (chex.Array): The distribution function.
+        dist_function (chex.Array): The distribution function.
+        bc_kwargs: Additional keyword arguments passed to the boundary conditions.
 
     Returns:
         Array: The distribution function after the application of the boundary
             conditions.
     """
-    if isinstance(lattice, Lattice):
-        return boundary_dict(lattice, dist_function, **bc_kwargs)
-    else:
-        return [
-            bdy(l, df, **kw)
-            for l, bdy, df, kw in zip(lattice.to_tuple(), boundary_dict, dist_function, bc_kwargs)
-        ]
+    return boundary_dict(lattice, dist_function, **bc_kwargs)
+
+@dispatch(CoupledLattices, Iterable, Iterable, Iterable)
+@partial(jax.jit, static_argnums=(0, 1))
+def apply_boundary_conditions(
+    lattice: CoupledLattices,
+    boundary_dict: Sequence[BoundaryDict],
+    dist_function: Sequence[chex.Array],
+    bc_kwargs: Sequence[dict],
+) -> Sequence[chex.Array]:
+    """Apply all the boundary conditions to the given distribution function.
+
+    Args:
+        lattice (CoupledLattices): The lattice.
+        dist_function (Sequence[chex.Array]): The distribution function.
+        dist_function (Sequence[chex.Array]): The distribution function.
+        boundary_dict (Sequence[BoundaryDict]): The dictionary of boundaries.
+        bc_kwargs (Sequence[dict]): Additional keyword arguments passed to the boundary conditions.
+
+    Returns:
+        Array: The distribution function after the application of the boundary
+            conditions.
+    """
+    return [
+        bdy(l, df, **kw)
+        for l, bdy, df, kw in zip(lattice.to_tuple(), boundary_dict, dist_function, bc_kwargs)
+    ]
