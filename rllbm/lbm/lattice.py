@@ -1,56 +1,38 @@
 import abc
+from collections import namedtuple
+from multipledispatch import dispatch
+
 from functools import partial
 from typing import Tuple, Union, List
-
 from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
 from rllbm.lbm import Stencil
 
-__all__ = ["Lattice", "FluidLattice", "ConvectionLattice"]
+__all__ = ["Lattice", "FluidLattice", "ThermalFluidLattice"]
 
 
-class Lattice(abc.ABC, Stencil):
+class Lattice(abc.ABC):
+    Macroscopics: namedtuple
     _stencil: Stencil
-    _shape: Tuple[int]
-    _name: str = "BaseLattice"
 
-    def __init__(self, stencil: Stencil, shape: Tuple[int]):
+    def __init__(self, stencil: Stencil):
         self._stencil = stencil
-        self._shape = shape
 
     @property
     def name(self):
         return self._name
-
+    
     @property
     def stencil(self):
         return self._stencil
-
-    @property
-    def e(self):
-        return self._stencil.e
-
-    @property
-    def cs(self):
-        return self._stencil.cs
-
-    @property
-    def w(self):
-        return self._stencil.w
-
-    @property
-    def D(self):
-        return self._stencil.D
-
-    @property
-    def Q(self):
-        return self._stencil.Q
-
-    @property
-    def shape(self):
-        return self._shape
+    
+    def __getattr__(self, name):
+        try:
+            return getattr(self.stencil, name)
+        except AttributeError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     @partial(jit, static_argnums=(0, 2))
     def get_moment(self, dist_function: ArrayLike, order: int) -> Array:
@@ -77,21 +59,18 @@ class Lattice(abc.ABC, Stencil):
 
 
 class FluidLattice(Lattice):
-    _name = "Fluid"
+    Macroscopics = namedtuple('FluidMacroscopics', ('rho', 'u'))
 
-    def __init__(
-        self,
-        stencil: Stencil,
-        shape: Tuple[int],
-    ):
-        super().__init__(stencil, shape)
+    def __init__(self, stencil: Stencil):
+        super().__init__(stencil)
 
-    def initialize(self, m: ArrayLike, u: ArrayLike) -> Array:
-        df_equilibrium = self.equilibrium(m, u)
+    def initialize(self, rho: ArrayLike, u: ArrayLike) -> Array:
+        df_equilibrium = self.equilibrium(rho, u)
         return df_equilibrium
 
+    @dispatch(Array, Array)
     @partial(jit, static_argnums=(0))
-    def equilibrium(self, m: ArrayLike, u: ArrayLike) -> Array:
+    def equilibrium(self, rho: ArrayLike, u: ArrayLike) -> Array:
         u_norm2 = (
             jnp.linalg.norm(
                 u,
@@ -111,15 +90,15 @@ class FluidLattice(Lattice):
             e_dot_u = jnp.einsum("dQ, XYd->XYQ", self.e, u)
         elif u.ndim == 4:
             # 3D array of 3D velocities (XxYxZx3)
-            w = self.w[jnp.newaxis, jnp.newaxis, jnp.newaxis:]
+            w = self.w[jnp.newaxis, jnp.newaxis, jnp.newaxis, :]
             e_dot_u = jnp.einsum("dQ, XYZd->XYZQ", self.e, u)
         else:
-            raise ValueError("velocity must be 2D,3D or 4D array")
+            raise ValueError("velocity must be 2D, 3D or 4D array")
 
         cs = self.cs
 
         df_eq = (
-            m
+            rho
             * w
             * (
                 1
@@ -130,6 +109,11 @@ class FluidLattice(Lattice):
         )
 
         return df_eq
+    
+    @dispatch(tuple)
+    @partial(jit, static_argnums=(0))
+    def equilibrium(self, fluid_state) -> Array:
+        return self.equilibrium(fluid_state.rho, fluid_state.u)
 
     @partial(jit, static_argnums=(0))
     def force(self):
@@ -137,29 +121,29 @@ class FluidLattice(Lattice):
 
     @partial(jit, static_argnums=(0))
     def collision_terms(self, dist_function: ArrayLike) -> Tuple[Array]:
-        m = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
-        u = self.get_moment(dist_function, order=1) / m
-
-        df_equilibrium = self.equilibrium(m, u)
+        fluid_state = self.get_macroscopics(dist_function)
+        df_equilibrium = self.equilibrium(fluid_state.rho, fluid_state.u)
         df_force = self.force()
-
         return df_equilibrium, df_force
 
     @partial(jit, static_argnums=(0))
     def get_macroscopics(self, dist_function: ArrayLike) -> Array:
-        m = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
-        u = self.get_moment(dist_function, order=1) / m
-        return m, u
+        rho = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
+        u = self.get_moment(dist_function, order=1) / rho
+        return self.Macroscopics(rho, u)
 
 
 class CoupledLattices(abc.ABC):
-    _name: str = "BaseCoupledLattices"
+    Macroscopics: namedtuple
 
-    def __init__(self, lattices: List[Lattice]):
-        self.lattices = [l for l in lattices]
+    def __init__(self, coupled_lattice_dict: dict):
+        self.lattices = coupled_lattice_dict
+        
+    def to_tuple(self):
+        return tuple(self.lattices.values())
 
-    def __getitem__(self, idx: int) -> Lattice:
-        return self.lattices[idx]
+    def __getitem__(self, key) -> Lattice:
+        return self.lattices[key]
 
     def __len__(self):
         return len(self.lattices)
@@ -185,77 +169,61 @@ class CoupledLattices(abc.ABC):
         pass
 
 
-class ConvectionLattice(CoupledLattices):
-    _name = "ThermalFluid"
+class ThermalFluidLattice(CoupledLattices):
+    Macroscopics = namedtuple(f'ThermalFluidMacroscopics', ('rho', 'T', "u"))
 
-    def __init__(self, fluid_stencil, thermal_stencil, shape: Tuple[int]):
-        super().__init__(
-            [
-                FluidLattice(fluid_stencil, shape),
-                FluidLattice(thermal_stencil, shape),
-            ]
-        )
+    def __init__(self, fluid_stencil, thermal_stencil):
+        coupled_lattice_dict = {
+            "fluid": FluidLattice(fluid_stencil),
+            "thermal": FluidLattice(thermal_stencil),
+        }
+        super().__init__(coupled_lattice_dict)
 
     @partial(jit, static_argnums=(0))
-    def initialize(
-        self,
-        density: ArrayLike,
-        temperature: ArrayLike,
-        velocity: ArrayLike,
-    ) -> Array:
+    def initialize(self, rho: ArrayLike, T: ArrayLike, u: ArrayLike) -> List[Array]:
         """Initialize the distribution function with the equilibrium distribution
         corresponding to the given density, temperature and velocity.
 
         Args:
-            density (ArrayLike): The prescribed density of the fluid.
-            temperature (ArrayLike): The prescribed temperature of the fluid.
-            velocity (ArrayLike): The prescribed velocity of the fluid.
+            rho (ArrayLike): The prescribed density of the fluid.
+            T (ArrayLike): The prescribed temperature of the fluid.
+            u (ArrayLike): The prescribed velocity of the fluid.
 
         Returns:
             Array: The initialized distribution function.
         """
+        return self.equilibrium(rho, T, u)
 
-        df_equilibrium = self.equilibrium(
-            density=density, velocity=velocity, temperature=temperature
-        )
-        return df_equilibrium
-
+    @dispatch(Array, Array, Array)
     @partial(jit, static_argnums=(0))
-    def equilibrium(
-        self,
-        density: ArrayLike,
-        velocity: ArrayLike,
-        temperature: ArrayLike,
-    ) -> Tuple[Array]:
+    def equilibrium(self, rho: ArrayLike, T: ArrayLike, u: ArrayLike) -> List[Array]:
         """Computes the equilibrium distribution functions of the coupled lattixes
 
         Args:
-            density (ArrayLike): The density of the fluid.
-            velocity (ArrayLike): The velocity of the fluid.
-            temperature (ArrayLike): The temperature of the fluid.
+            rho (ArrayLike): The density of the fluid.
+            T (ArrayLike): The temperature of the fluid.
+            u (ArrayLike): The velocity of the fluid.
 
         Returns:
             Tuple[Array]: The equilibrium distribution function for the fluid and
                 thermal lattices.
         """
 
-        fluid_eq = self[0].equilibrium(
-            m=density,
-            u=velocity,
-        )
-
-        thermal_eq = self[1].equilibrium(
-            m=temperature,
-            u=velocity,
-        )
+        fluid_eq = self["fluid"].equilibrium(rho, u)
+        thermal_eq = self["thermal"].equilibrium(T, u)
 
         return [fluid_eq, thermal_eq]
+    
+    @dispatch(tuple)
+    @partial(jit, static_argnums=(0))
+    def equilibrium(self, fluid_state) -> Array:
+        return self.equilibrium(fluid_state.rho, fluid_state.T, fluid_state.u)
 
     @partial(jit, static_argnums=(0))
     def force(
         self,
-        temperature: ArrayLike,
-        density: ArrayLike,
+        rho: ArrayLike,
+        T: ArrayLike,
         gravity: ArrayLike,
         thermal_expansion: float,
         timestep: float,
@@ -263,16 +231,16 @@ class ConvectionLattice(CoupledLattices):
         """Computes the force on the fluid due to gravity.
 
         Args:
-            temperature: The temperature of the fluid.
-            density: The density of the fluid.
+            rho: The density of the fluid.
+            T: The temperature of the fluid.
             gravity: The gravitational acceleration vector.
             thermal_expansion: The thermal expansion coefficient of the fluid.
+            timestep: The timestep of the simulation.
 
         Returns:
             The force on the fluid due to gravity.
         """
-        # Get the stencil from the first element
-        stencil = self[0].stencil
+        stencil = self["fluid"].stencil
 
         # Project the gravity vector onto the lattice directions
         e_dot_f = jnp.einsum("dQ, d->Q", stencil.e, gravity)[
@@ -284,8 +252,8 @@ class ConvectionLattice(CoupledLattices):
         # Compute the force
         fluid_force = (
             scalar
-            * density
-            * temperature
+            * rho
+            * T
             * e_dot_f
             * stencil.w[jnp.newaxis, jnp.newaxis, :]
         )
@@ -300,7 +268,7 @@ class ConvectionLattice(CoupledLattices):
         gravity: ArrayLike,
         thermal_expansion: float,
         timestep: float,
-    ) -> List[Tuple]:
+    ) -> Tuple:
         """Compute the collision terms for the coupled fluid and thermal lattices.
 
         Args:
@@ -314,19 +282,15 @@ class ConvectionLattice(CoupledLattices):
                 the fluid and thermal lattices.
         """
         # Get the moments of the distribution functions
-        density, velocity, temperature = self.get_macroscopics(dist_functions)
+        fluid_state = self.get_macroscopics(dist_functions)
 
         # Compute the equilibrium terms
-        equilibrium = self.equilibrium(
-            density=density,
-            velocity=velocity,
-            temperature=temperature,
-        )
+        equilibrium = self.equilibrium(fluid_state.rho, fluid_state.T, fluid_state.u)
 
         # Compute the force terms
         force = self.force(
-            temperature=temperature,
-            density=density,
+            rho=fluid_state.rho,
+            T=fluid_state.T,
             gravity=gravity,
             thermal_expansion=thermal_expansion,
             timestep=timestep,
@@ -335,7 +299,7 @@ class ConvectionLattice(CoupledLattices):
         return equilibrium, force
 
     @partial(jit, static_argnums=(0))
-    def get_macroscopics(self, dist_functions: List[ArrayLike]) -> List[Array]:
+    def get_macroscopics(self, dist_functions: List[ArrayLike]) -> Macroscopics:
         """Get the macroscopic quantities for the coupled NSE and ADE lattices.
 
         Args:
@@ -345,8 +309,8 @@ class ConvectionLattice(CoupledLattices):
         Returns:
             List[Array]: The macroscopic quantities for the NSE and ADE lattices.
         """
-        density = self[0].get_moment(dist_functions[0], order=0)[..., jnp.newaxis]
-        velocity = self[0].get_moment(dist_functions[0], order=1) / density
-        temperature = self[1].get_moment(dist_functions[1], order=0)[..., jnp.newaxis]
+        rho = self["fluid"].get_moment(dist_functions[0], order=0)[..., jnp.newaxis]
+        u = self["fluid"].get_moment(dist_functions[0], order=1) / rho
+        T = self["thermal"].get_moment(dist_functions[1], order=0)[..., jnp.newaxis]
 
-        return [density, velocity, temperature]
+        return self.Macroscopics(rho, T, u)

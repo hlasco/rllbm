@@ -1,13 +1,13 @@
 import abc
+from collections.abc import Iterable
 from functools import partial
-from typing import List, Union, overload, Tuple
+from typing import List, Union, Tuple
 
 from jax import Array, jit
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
-from rllbm.lbm.lattice import Stencil, Lattice, CoupledLattices
-import jax
+from rllbm.lbm.lattice import Lattice, CoupledLattices
 
 __all__ = [
     "BounceBackBoundary",
@@ -79,7 +79,7 @@ class BoundaryDict:
         Args:
             boundary (Union[Boundary, List[Boundary]]): The boundaries to add.
         """
-        if isinstance(boundary, list):
+        if isinstance(boundary, Iterable):
             for bdy in boundary:
                 if bdy.name in self._boundary_dict:
                     raise ValueError(f"Boundary {bdy.name} already exists.")
@@ -240,11 +240,7 @@ class OutletBoundary(Boundary):
         super().__init__(name, mask)
 
     @partial(jit, static_argnums=(0, 1))
-    def __call__(
-        self,
-        lattice: Lattice,
-        dist_function: ArrayLike,
-    ) -> Array:
+    def __call__(self, lattice: Lattice, dist_function: ArrayLike) -> Array:
         """Apply the outlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
@@ -254,10 +250,10 @@ class OutletBoundary(Boundary):
             Array: The distribution function after the application of the boundary
                 condition.
         """
-        m, u = lattice.get_macroscopics(dist_function[self.neighbor_mask, :])
-        dist_ = lattice.equilibrium(m, u)
+        fluid_state = lattice.get_macroscopics(dist_function[self.neighbor_mask, :])
+        eq = lattice.equilibrium(fluid_state)
         for i in range(lattice.Q):
-            dist_function = dist_function.at[self._mask, i].set(dist_[:, i])
+            dist_function = dist_function.at[self._mask, i].set(eq[:, i])
         return dist_function
 
     @property
@@ -284,7 +280,8 @@ def apply_boundary_conditions(
         lattice (Lattice): The lattice.
         dist_function (ArrayLike): The distribution function.
         boundary_dict (BoundaryDict): The dictionary of boundaries.
-        **kwargs: Additional keyword arguments passed to the boundary conditions.
+        dist_function (ArrayLike): The distribution function.
+        **bc_kwargs: Additional keyword arguments passed to the boundary conditions.
 
     Returns:
         Array: The distribution function after the application of the boundary
@@ -295,5 +292,5 @@ def apply_boundary_conditions(
     else:
         return [
             bdy(l, df, **kw)
-            for l, bdy, df, kw in zip(lattice, boundary_dict, dist_function, bc_kwargs)
+            for l, bdy, df, kw in zip(lattice.to_tuple(), boundary_dict, dist_function, bc_kwargs)
         ]

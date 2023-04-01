@@ -10,3 +10,4 @@ pytest
 bokeh
 holoviews
 panel
+moviepy

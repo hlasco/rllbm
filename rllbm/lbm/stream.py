@@ -42,14 +42,14 @@ def _stream(lattice: Lattice, dist_function: ArrayLike, mask: ArrayLike) -> Arra
 
 @partial(jit, static_argnums=(0))
 def _stream_coupled(
-    lattices: CoupledLattices, dist_functions: List[ArrayLike], masks: Tuple[ArrayLike]
+    lattices: List[Lattice], dist_functions: List[ArrayLike], masks: List[ArrayLike]
 ) -> Array:
     """Apply the streaming step to the distribution functions.
 
     Args:
         lattices (CoupledLattices): The coupled lattices on which the streaming is performed.
         dist_functions (List[ArrayLike]): The distribution functions to be streamed.
-        masks (Tuple[ArrayLike]): The masks where the streaming should be performed.
+        masks (List[ArrayLike]): The masks where the streaming should be performed.
 
     Returns:
         Array: The streamed distribution functions.
@@ -78,7 +78,7 @@ def stream(
         Array: The streamed distribution function.
     """
     if isinstance(lattice, CoupledLattices):
-        dist_function = _stream_coupled(lattice, dist_function, mask)
+        dist_function = _stream_coupled(lattice.to_tuple(), dist_function, mask)
     else:
         dist_function = _stream(lattice, dist_function, mask)
     return dist_function

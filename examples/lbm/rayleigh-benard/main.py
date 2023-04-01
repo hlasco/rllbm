@@ -13,14 +13,6 @@ warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 @jax.jit
 def get_wall_temperature(t, x, freq_x0=0.005, freq_amp=0.02, amp=0.5, width=0.1):
-    """
-    Function to calculate the bottom temperature at the current time step (t) and spatial location (y)
-        nx is the number of grid points in the x-direction
-        freq_x0 is the frequency of the sinusoidal variation in the x-direction
-        freq_amp is the frequency of the sinusoidal variation in the amplitude
-        amp is the maximum amplitude of the temperature
-        width is the width of the temperature profile
-    """
     x_min = x[0]
     x_max = x[-1]
     
@@ -35,8 +27,8 @@ def get_wall_temperature(t, x, freq_x0=0.005, freq_amp=0.02, amp=0.5, width=0.1)
 def init_ncfile(path, sim):
     """Creates a new netCDF4 file, using the specified path and simulation."""
     with netCDF4.Dataset(path, "w", format="NETCDF4") as ncfile:
-        ncfile.createDimension("nx", sim.nx)
-        ncfile.createDimension("ny", sim.ny)
+        ncfile.createDimension("nx", sim.shape[0])
+        ncfile.createDimension("ny", sim.shape[1])
         ncfile.createDimension("time", None)
 
         ncfile.createVariable("x", "f4", ("nx",))
@@ -53,8 +45,8 @@ def init_ncfile(path, sim):
             least_significant_digit=4,
         ),
 
-        ncfile.variables["x"][:] = sim.x * sim.dx
-        ncfile.variables["y"][:] = sim.y * sim.dx
+        ncfile.variables["x"][:] = sim.x
+        ncfile.variables["y"][:] = sim.y
 
 
 def write_ncfile(path, time_index, time, temperature):
@@ -66,12 +58,15 @@ def write_ncfile(path, time_index, time, temperature):
 
 if __name__ == "__main__":
     nc_path = "outputs.nc"
+    
+    nx, ny = 256, 256
 
-    # Simulation parameters
-    nx = 256
-    ny = 256
+    domain = lbm.Domain(
+        shape=(nx, ny),
+        bounds=(0., 1., 0., 1.)
+    )
 
-    dx = 1.0 / (max(nx, ny))
+    dx = domain.dx
     dt = dx ** 0.5
 
     prandtl = 0.71
@@ -105,41 +100,35 @@ if __name__ == "__main__":
     }
 
     # Instantiate the simulation
-    sim = lbm.Simulation(nx, ny, dt, omegas, collision_kwargs)
-
-    X, Y = jnp.meshgrid(sim.x, sim.y, indexing="ij")
+    sim = lbm.Simulation(domain, omegas, collision_kwargs)
 
     # Instantiate the lattice
-    lattice = lbm.ConvectionLattice(
+    lattice = lbm.ThermalFluidLattice(
         fluid_stencil=lbm.D2Q9,
         thermal_stencil=lbm.D2Q5,
-        shape=(nx, ny),
     )
 
     # Initialize the density functions
     dfs = lattice.initialize(
-        density=jnp.ones((nx, ny, 1)),
-        velocity=jnp.zeros((nx, ny, 2)),
-        temperature=jnp.zeros((nx, ny, 1)),
+        rho=jnp.ones((nx, ny, 1)),
+        T=jnp.zeros((nx, ny, 1)),
+        u=jnp.zeros((nx, ny, 2)),
     )
     sim.initialize(lattice, dfs)
 
     # Set the boundary conditions
     fluid_bc = lbm.BoundaryDict(
-        [
-            lbm.BounceBackBoundary(
-                "No-Slip Walls", (X == 0) | (X == nx - 1) | (Y == 0) | (Y == ny - 1)
-            ),
-        ]
-    )
-    thermal_bc = lbm.BoundaryDict(
-        [
-            lbm.BounceBackBoundary("No-Slip Walls", (Y == 0) | (Y == ny - 1)),
-            lbm.InletBoundary("Left Wall", (X == 0)),
-            lbm.InletBoundary("Right Wall", (X == nx - 1)),
-        ]
+        lbm.BounceBackBoundary("No-Slip Walls", sim.left | sim.right | sim.bottom | sim.top)
     )
     fluid_bc_kwargs = {}
+    
+    thermal_bc = lbm.BoundaryDict(
+        [
+            lbm.BounceBackBoundary("No-Slip Walls", sim.bottom | sim.top),
+            lbm.InletBoundary("Left Wall", sim.left),
+            lbm.InletBoundary("Right Wall", sim.right),
+        ]
+    )
     
     thermal_bc_kwargs = {
         "Left Wall": {"m": get_wall_temperature(0, sim.y)},
@@ -155,17 +144,16 @@ if __name__ == "__main__":
 
     for i in trange(steps):
         sim.step()
-        
+        t = i * dt
         # Update the left wall temperature
-        sim.bc_kwargs[1]["Left Wall"]["m"] = get_wall_temperature(sim.time / convection_timescale, sim.y)
+        sim.bc_kwargs[1]["Left Wall"]["m"] = get_wall_temperature(t / convection_timescale, sim.y)
 
         if i % io_frequency == 0:
+            fluid_state = sim.get_macroscopics(sim.dfs)
             
-            _, velocity, temperature = sim.get_macroscopics(sim.dfs)
-            
-            if jnp.isnan(temperature).any():
+            if jnp.isnan(fluid_state.T).any():
                 print("NaNs detected, stopping simulation.")
                 break
 
             time_index = i // io_frequency
-            write_ncfile(nc_path, time_index, sim.time, temperature)
+            write_ncfile(nc_path, time_index, t, fluid_state.T)

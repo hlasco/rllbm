@@ -12,8 +12,8 @@ def episode_trigger(ep_id):
 
 env = gym.wrappers.RecordVideo(env, 'visu', episode_trigger=episode_trigger)
 
-experiment = comet_ml.Experiment(project_name="rllbm-thermal-fluid-control")
-env = CometLogger(env, experiment)
+#experiment = comet_ml.Experiment(project_name="rllbm-thermal-fluid-control")
+#env = CometLogger(env, experiment)
 
 for x in range(2):
     
@@ -28,9 +28,9 @@ for x in range(2):
         observation, reward, terminated, truncated, info = env.step(
             env.action_space.sample()
         )
-        #print("step:", i, "time:", time.time() - start)
+        print("step:", i, "time:", time.time() - start)
         i+=1
 
 env.close()
 
-experiment.end()
+#experiment.end()

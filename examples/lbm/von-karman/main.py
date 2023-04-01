@@ -10,7 +10,7 @@ import netCDF4
 import warnings
 
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
-
+import matplotlib.pyplot as plt
 
 @jax.jit
 def get_wall_velocity(x, amp=0.1, direction=0):
@@ -22,15 +22,14 @@ def get_wall_velocity(x, amp=0.1, direction=0):
 
     velocity = jnp.zeros((x.shape[0], 2))
     velocity = velocity.at[:, direction].set(amp * x_ * (1 - x_) / 0.5**2)
-
     return velocity
 
 
 def init_ncfile(path, sim):
     """Creates a new netCDF4 file, using the specified path and simulation."""
     with netCDF4.Dataset(path, "w", format="NETCDF4") as ncfile:
-        ncfile.createDimension("nx", sim.nx)
-        ncfile.createDimension("ny", sim.ny)
+        ncfile.createDimension("nx", sim.shape[0])
+        ncfile.createDimension("ny", sim.shape[1])
         ncfile.createDimension("time", None)
 
         ncfile.createVariable("x", "f4", ("nx",))
@@ -47,8 +46,8 @@ def init_ncfile(path, sim):
             least_significant_digit=2,
         ),
 
-        ncfile.variables["x"][:] = sim.x * sim.dx
-        ncfile.variables["y"][:] = sim.y * sim.dx
+        ncfile.variables["x"][:] = sim.x
+        ncfile.variables["y"][:] = sim.y
 
 
 def write_ncfile(path, time_index, time, curl):
@@ -62,25 +61,29 @@ if __name__ == "__main__":
     nc_path = "outputs.nc"
 
     # Simulation parameters
-    nx = 512
-    ny = 128
+    nx, ny = 512, 128
+    
     mach = 0.05
     re = 150
 
-    obs_size = ny / 8
-    obs_x = nx / 5
-    obs_y = ny / 2
+    domain = lbm.Domain(
+        shape=(nx, ny),
+        bounds=(0., 1.0, 0., ny / nx)
+    )
+
+    dx = domain.dx
+    dt = dx
+    obs_x = domain.width[0] / 5
+    obs_y = domain.width[1] * 0.51
+    obs_size = domain.width[1] / 8
 
     # strouhal number
     st = 0.198 * (1.0 - 19.7 / re)
     v0 = mach * jnp.sqrt(3)
-    vortex_period = obs_size / (st * v0 * ny)
+    vortex_period = 2 * obs_size / (st * v0)
 
-    viscosity = (v0 * obs_size * 2) / re
+    viscosity = (v0 * obs_size / dx) / re
     omega = 1.0 / (3 * viscosity + 0.5)
-
-    dx = 1.0 / (max(nx, ny))
-    dt = dx
 
     # The run time in code units
     # Simulate 10 periods
@@ -91,13 +94,10 @@ if __name__ == "__main__":
     # Frequency of writing to the netCDF file
     io_frequency = int(0.1 * vortex_period / dt)
 
-    # Instantiate the simulation
-    sim = lbm.Simulation(nx, ny, dt, omega)
-
-    X, Y = jnp.meshgrid(sim.x, sim.y, indexing="ij")
+    sim = lbm.Simulation(domain, omega)
 
     # Instantiate the lattice
-    lattice = lbm.FluidLattice(lbm.D2Q9, (nx, ny))
+    lattice = lbm.FluidLattice(lbm.D2Q9)
 
     # Initialize the density functions
     dfs = lattice.initialize(
@@ -106,14 +106,15 @@ if __name__ == "__main__":
     )
     sim.initialize(lattice, dfs)
 
+    X, Y = jnp.meshgrid(sim.x, sim.y, indexing='ij')
     obstacle_mask = (jnp.fabs(X - obs_x) < obs_size) & (jnp.fabs(Y - obs_y) < obs_size)
     # Set the boundary conditions
     fluid_bc = lbm.BoundaryDict(
         [
-            lbm.InletBoundary("Left", (X == 0)),
-            lbm.OutletBoundary("Right", (X == nx - 1), direction=[1, 0]),
-            lbm.BounceBackBoundary("Top", (Y == ny - 1)),
-            lbm.BounceBackBoundary("Bot", (Y == 0)),
+            lbm.InletBoundary("Left", sim.left),
+            lbm.OutletBoundary("Right", sim.right, direction=[1, 0]),
+            lbm.BounceBackBoundary("Top", sim.top),
+            lbm.BounceBackBoundary("Bot", sim.bottom),
             lbm.BounceBackBoundary("Obstacle", obstacle_mask),
         ]
     )
@@ -128,22 +129,21 @@ if __name__ == "__main__":
     sim.set_boundary_conditions(fluid_bc, fluid_bc_kwargs)
 
     init_ncfile(nc_path, sim)
-
-    rho, u = sim.get_macroscopics(sim.dfs)
-
+    
     for i in trange(steps):
         sim.step()
+        t = i * dt
 
         if i % io_frequency == 0:
-            rho, u = sim.get_macroscopics(sim.dfs)
+            fluid_state = sim.get_macroscopics(sim.dfs)
 
-            _, dudy = jnp.gradient(u[..., 0], dx)
-            dvdx, _ = jnp.gradient(u[..., 1], dx)
+            _, dudy = jnp.gradient(fluid_state.u[..., 0], dx)
+            dvdx, _ = jnp.gradient(fluid_state.u[..., 1], dx)
             curl = dudy - dvdx
 
             time_index = i // io_frequency
-            write_ncfile(nc_path, time_index, sim.time, curl)
+            write_ncfile(nc_path, time_index, t, curl)
 
-            if jnp.isnan(u).any():
+            if jnp.isnan(fluid_state.u).any():
                 print("NaNs detected, stopping simulation.")
                 break

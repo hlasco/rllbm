@@ -1,18 +1,13 @@
 
 import abc
 import gymnasium as gym
-import time
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from typing import Callable
-
 from rllbm import lbm
 
 import holoviews as hv
-
-from holoviews.operation.datashader import rasterize
 
 import time
 
@@ -42,36 +37,24 @@ def get_wall_temperature(x, x_peak, amp, width):
 
 @partial(jax.jit, static_argnums=(0))
 def update_tracers(sim, dfs, tracers):
-    density, velocity, temperature = sim.get_macroscopics(dfs)
+    fluid_state = sim.get_macroscopics(dfs)
     for tracer_type in tracers.keys():
         for i, tracer in enumerate(tracers.get(tracer_type)):
             idx = jnp.floor(tracer.x / sim.dx).astype(int)
-            d = density[idx[0], idx[1],0]
-            t = temperature[idx[0], idx[1],0]
-            v = velocity[idx[0], idx[1],:]
+            u = fluid_state.u[idx[0], idx[1]]
             
-            tracer.x += v * sim.dx * tracer.stream
+            tracer.x += u * sim.dx * tracer.stream
             tracer.x = jnp.clip(
                 tracer.x,
                 a_min = jnp.array([sim.dx, sim.dx]),
                 a_max = jnp.array([1.0-sim.dx, 1.0-sim.dx])
             )
-            tracer.obs = jnp.stack([d, t, v[0], v[1]], axis=-1)
+            tracer.obs = jnp.concatenate(
+                [state[idx[0], idx[1]] for state in fluid_state]
+            )
 
             tracers.set_tracer(tracer_type, i, tracer)
-            print(tracer.x)
 
-    return tracers
-
-    for i in range(len(tracers)):
-        idx = jnp.floor(tracers[i].x / sim.dx).astype(int)
-        tracers[i].x += velocity[idx[0], idx[1], :] * sim.dx * tracers[i].stream
-        tracers[i].x = jnp.clip(
-            tracers[i].x,
-            a_min = jnp.array([sim.dx, sim.dx]),
-            a_max = jnp.array([1.0-sim.dx, 1.0-sim.dx])
-        )
-        tracers[i].obs = jnp.stack([density[idx[0], idx[1],0], temperature[idx[0], idx[1],0], velocity[idx[0], idx[1],0], velocity[idx[0], idx[1],1]], axis=-1)
     return tracers
 
 class LBMEnv(gym.Env):
@@ -82,10 +65,13 @@ class LBMEnv(gym.Env):
         self.render_mode = render_mode
 
         # Simulation parameters
-        nx = 256
-        ny = 256
+        nx, ny = 256, 256
+        domain = lbm.Domain(
+            shape=(nx, ny),
+            bounds=(0., 1.0, 0., 1.0)
+        )
 
-        dx = 1.0 / (max(nx, ny)-1)
+        dx = domain.dx
         dt = dx ** 0.5
 
         prandtl = 0.71
@@ -117,7 +103,7 @@ class LBMEnv(gym.Env):
         }
 
         # Instantiate the simulation
-        self.sim = lbm.Simulation(nx, ny, dt, omegas, collision_kwargs)
+        self.sim = lbm.Simulation(domain, omegas, collision_kwargs)
 
         # Observations are dictionaries with the agent's and the target's location.
         # Each location is encoded as an element of {0, ..., `size`}^2, i.e. MultiDiscrete([size, size]).
@@ -143,20 +129,18 @@ class LBMEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        X, Y = jnp.meshgrid(self.sim.x, self.sim.y, indexing="ij")
 
         # Instantiate the lattice
-        self.lattice = lbm.ConvectionLattice(
+        self.lattice = lbm.ThermalFluidLattice(
             fluid_stencil=lbm.D2Q9,
             thermal_stencil=lbm.D2Q5,
-            shape=(self.sim.nx, self.sim.ny),
         )
 
         # Initialize the density functions
         dfs = self.lattice.initialize(
-            density=jnp.ones((self.sim.nx, self.sim.ny, 1)),
-            velocity=jnp.zeros((self.sim.nx, self.sim.ny, 2)),
-            temperature=jnp.zeros((self.sim.nx, self.sim.ny, 1)),
+            rho=jnp.ones((*self.sim.shape, 1)),
+            T=jnp.zeros((*self.sim.shape, 1)),
+            u=jnp.zeros((*self.sim.shape, 2)),
         )
         
         self.sim.initialize(self.lattice, dfs)
@@ -165,21 +149,21 @@ class LBMEnv(gym.Env):
         fluid_bc = lbm.BoundaryDict(
             [
                 lbm.BounceBackBoundary(
-                    "No-Slip Walls", (X == 0) | (X == self.sim.nx - 1) | (Y == 0) | (Y == self.sim.ny - 1)
+                    "No-Slip Walls", self.sim.bottom | self.sim.top | self.sim.left | self.sim.right
                 ),
             ]
         )
         thermal_bc = lbm.BoundaryDict(
             [
-                lbm.BounceBackBoundary("No-Slip Walls", (Y == 0) | (Y == self.sim.ny - 1)),
-                lbm.InletBoundary("Left Wall", (X == 0)),
-                lbm.InletBoundary("Right Wall", (X == self.sim.nx - 1)),
+                lbm.BounceBackBoundary("No-Slip Walls", self.sim.bottom | self.sim.top),
+                lbm.InletBoundary("Left Wall", self.sim.left),
+                lbm.InletBoundary("Right Wall", self.sim.right),
             ]
         )
         fluid_bc_kwargs = {}
 
         thermal_bc_kwargs = {
-            "Left Wall": {"m": get_wall_temperature(self.sim.y, self.bc_params[0], self.bc_params[1], self.bc_params[2])},
+            "Left Wall": {"m": get_wall_temperature(self.sim.y, *self.bc_params)},
             "Right Wall": {"m": 0.0},
         }
         
@@ -192,7 +176,7 @@ class LBMEnv(gym.Env):
 
         self.tracers = lbm.TracerCollection()
 
-        for _ in range(10):
+        for _ in range(50):
             pos = np.random.uniform(0.05, 0.95, size=(2,))
             pos = jnp.array(pos)
             self.tracers.add("sensors", lbm.Tracer(x=pos, stream=True))
@@ -217,17 +201,13 @@ class LBMEnv(gym.Env):
             self.sim_step += 1
 
             self.tracers = update_tracers(self.sim, self.sim.dfs, self.tracers)
-            #self.current_pos = update_tracer(self.sim, self.sim.dfs, self.current_pos)
-            #self.target_pos = update_tracer(self.sim, self.sim.dfs, self.target_pos)
-
-        current = self.tracers.get("current")
-        print(current[0].x)
-        #print(jnp.floor(self.current_pos.x/self.sim.dx).astype(int))
 
         terminated = self.sim_step > self.sim_steps
-        #if jnp.isnan(self.target_pos.obs).any():
-        #    print("Simulation crashed")
-        #    terminated = True
+        current = self.tracers.get("current")
+        print(current[0].obs)
+        if jnp.isnan(current[0].obs).any():
+            print("Simulation crashed")
+            terminated = True
 
         observation = 0.0
         reward = 1 if terminated else 0
@@ -240,10 +220,10 @@ class LBMEnv(gym.Env):
             return frame
 
     def _render_frame(self):
-        density, velocity, temperature = self.sim.get_macroscopics(self.sim.dfs)
-        x = self.sim.x / self.sim.nx
-        y = self.sim.y / self.sim.ny
-        img = hv.Image((x, y, temperature[:,:,0].T))
+        fluid_state = self.sim.get_macroscopics(self.sim.dfs)
+        x = self.sim.x
+        y = self.sim.y 
+        img = hv.Image((x, y, fluid_state.T[:,:,0].T))
         img = img.opts(
             cmap="RdBu_r",
             clim=(-0.05, 0.05),
@@ -254,7 +234,7 @@ class LBMEnv(gym.Env):
             cbar_extend  = "neither",
             aspect=1.0,
         )
-        curve = hv.Curve((temperature[0,:], y), "T_0", "y",).opts(
+        curve = hv.Curve((fluid_state.T[0,:], y), "T_0", "y",).opts(
             aspect = 1.0/4,
             xlim=(-0.55, 0.55),
             xticks=(-0.5, 0, 0.5),
