@@ -12,8 +12,9 @@ import warnings
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 import matplotlib.pyplot as plt
 
+
 @jax.jit
-def get_wall_velocity(x, amp=0.1, direction=0):
+def get_inlet_velocity(x, amp=0.1, direction=0):
     """ """
     x_min = x[0]
     x_max = x[-1]
@@ -61,20 +62,17 @@ if __name__ == "__main__":
     nc_path = "outputs.nc"
 
     # Simulation parameters
-    nx, ny = 512, 128
-    
+    nx, ny = 192, 48
+
     mach = 0.05
     re = 150
 
-    domain = lbm.Domain(
-        shape=(nx, ny),
-        bounds=(0., 1.0, 0., ny / nx)
-    )
+    domain = lbm.Domain(shape=(nx, ny), bounds=(0.0, nx / ny, 0.0, 1.0))
 
     dx = domain.dx
     dt = dx
     obs_x = domain.width[0] / 5
-    obs_y = domain.width[1] * 0.51
+    obs_y = domain.width[1] * 0.4
     obs_size = domain.width[1] / 8
 
     # strouhal number
@@ -87,55 +85,45 @@ if __name__ == "__main__":
 
     # The run time in code units
     # Simulate 10 periods
-    run_time = 10 * vortex_period
+    run_time = 20 * vortex_period
 
     # Number of steps to run
     steps = int(run_time / dt)
     # Frequency of writing to the netCDF file
     io_frequency = int(0.1 * vortex_period / dt)
 
-    sim = lbm.Simulation(domain, omega)
-
     # Instantiate the lattice
     lattice = lbm.FluidLattice(lbm.D2Q9)
 
-    # Initialize the density functions
-    dfs = lattice.initialize(
-        jnp.ones((nx, ny, 1)),
-        jnp.zeros((nx, ny, 2)),
+    sim = lbm.Simulation(domain, lattice, omega)
+    sim.set_initial_conditions(
+        rho=jnp.ones((nx, ny, 1)),
+        u=jnp.zeros((nx, ny, 2)),
     )
-    sim.initialize(lattice, dfs)
 
-    X, Y = jnp.meshgrid(sim.x, sim.y, indexing='ij')
+    X, Y = jnp.meshgrid(sim.x, sim.y, indexing="ij")
     obstacle_mask = (jnp.fabs(X - obs_x) < obs_size) & (jnp.fabs(Y - obs_y) < obs_size)
     # Set the boundary conditions
-    fluid_bc = lbm.BoundaryDict(
-        [
-            lbm.InletBoundary("Left", sim.left),
-            lbm.OutletBoundary("Right", sim.right, direction=[1, 0]),
-            lbm.BounceBackBoundary("Top", sim.top),
-            lbm.BounceBackBoundary("Bot", sim.bottom),
-            lbm.BounceBackBoundary("Obstacle", obstacle_mask),
-        ]
-    )
+    fluid_bc = [
+        lbm.InletBoundary("Left", sim.left),
+        lbm.OutletBoundary("Right", sim.right, direction=[1, 0]),
+        lbm.BounceBackBoundary("Top", sim.top),
+        lbm.BounceBackBoundary("Bot", sim.bottom),
+        lbm.BounceBackBoundary("Obstacle", obstacle_mask),
+    ]
 
-    fluid_bc_kwargs = {
-        "Left": {
-            "m": 1.0,
-            "u": get_wall_velocity(sim.y, amp=v0, direction=0),
-        },
-    }
-
-    sim.set_boundary_conditions(fluid_bc, fluid_bc_kwargs)
+    sim.set_boundary_conditions(fluid_bc)
+    inlet_vel = get_inlet_velocity(sim.y, amp=v0, direction=0)
+    sim.update_boundary_condition("Left", {"u": inlet_vel})
 
     init_ncfile(nc_path, sim)
-    
+
     for i in trange(steps):
         sim.step()
         t = i * dt
 
         if i % io_frequency == 0:
-            fluid_state = sim.get_macroscopics(sim.dfs)
+            fluid_state = sim.get_macroscopics()
 
             _, dudy = jnp.gradient(fluid_state.u[..., 0], dx)
             dvdx, _ = jnp.gradient(fluid_state.u[..., 1], dx)

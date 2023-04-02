@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import abc
 from collections import namedtuple
 from collections.abc import Iterable
 from multipledispatch import dispatch
 
 from functools import partial
-from typing import Sequence, Union
+from typing import TYPE_CHECKING, Sequence, Union, Dict
 
 import chex
 import jax
@@ -12,29 +14,32 @@ from jax import numpy as jnp
 
 from rllbm.lbm import Stencil
 
+if TYPE_CHECKING:
+    from rllbm.lbm.simulation import LBMState
+
 __all__ = ["Lattice", "FluidLattice", "ThermalFluidLattice"]
 
 
 class Lattice(abc.ABC):
     Macroscopics: namedtuple
+    name: str
     _stencil: Stencil
 
-    def __init__(self, stencil: Stencil):
+    def __init__(self, stencil: Stencil, name: str):
         self._stencil = stencil
+        self.name = name
 
-    @property
-    def name(self):
-        return self._name
-    
     @property
     def stencil(self):
         return self._stencil
-    
+
     def __getattr__(self, name):
         try:
             return getattr(self.stencil, name)
         except AttributeError:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
 
     @partial(jax.jit, static_argnums=(0, 2))
     def get_moment(self, dist_function: chex.Array, order: int) -> chex.Array:
@@ -44,7 +49,7 @@ class Lattice(abc.ABC):
         )
 
     @abc.abstractmethod
-    def initialize(self, dist_function: chex.Array, *args, **kwargs) -> chex.Array:
+    def initialize(self, *args, **kwargs) -> chex.Array:
         pass
 
     @abc.abstractmethod
@@ -56,19 +61,18 @@ class Lattice(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def collision_terms(self, dist_function: chex.Array, *args, **kwards) -> chex.Array:
+    def collision_terms(self, state_dict) -> chex.Array:
         pass
 
 
 class FluidLattice(Lattice):
-    Macroscopics = namedtuple('FluidMacroscopics', ('rho', 'u'))
+    Macroscopics = namedtuple("FluidMacroscopics", ("rho", "u"))
 
-    def __init__(self, stencil: Stencil):
-        super().__init__(stencil)
+    def __init__(self, stencil: Stencil, name: str = "FluidLattice"):
+        super().__init__(stencil, name)
 
     def initialize(self, rho: chex.Array, u: chex.Array) -> chex.Array:
-        df_equilibrium = self.equilibrium(rho, u)
-        return df_equilibrium
+        return self.equilibrium(rho, u)
 
     @dispatch(jax.Array, jax.Array)
     @partial(jax.jit, static_argnums=(0))
@@ -111,7 +115,7 @@ class FluidLattice(Lattice):
         )
 
         return df_eq
-    
+
     @dispatch(Iterable)
     @partial(jax.jit, static_argnums=(0))
     def equilibrium(self, fluid_state: Sequence[chex.Array]) -> chex.Array:
@@ -122,17 +126,25 @@ class FluidLattice(Lattice):
         return 0.0
 
     @partial(jax.jit, static_argnums=(0))
-    def collision_terms(self, dist_function: chex.Array) -> Sequence[chex.Array]:
-        fluid_state = self.get_macroscopics(dist_function)
+    def collision_terms(self, state_dict) -> Sequence[chex.Array]:
+        df = state_dict[self.name].df
+        fluid_state = self.get_macroscopics(df)
         df_equilibrium = self.equilibrium(fluid_state.rho, fluid_state.u)
         df_force = self.force()
         return df_equilibrium, df_force
 
+    @dispatch(jax.Array)
     @partial(jax.jit, static_argnums=(0))
-    def get_macroscopics(self, dist_function: chex.Array) -> Sequence[chex.Array]:
-        rho = self.get_moment(dist_function, order=0)[..., jnp.newaxis]
-        u = self.get_moment(dist_function, order=1) / rho
+    def get_macroscopics(self, df: chex.Array) -> Sequence[chex.Array]:
+        rho = self.get_moment(df, order=0)[..., jnp.newaxis]
+        u = self.get_moment(df, order=1) / rho
         return self.Macroscopics(rho, u)
+
+    @dispatch(dict)
+    @partial(jax.jit, static_argnums=(0))
+    def get_macroscopics(self, state_dict: Dict[str, LBMState]) -> Sequence[chex.Array]:
+        df = state_dict[self.name].df
+        return self.get_macroscopics(df)
 
 
 class CoupledLattices(abc.ABC):
@@ -140,9 +152,15 @@ class CoupledLattices(abc.ABC):
 
     def __init__(self, coupled_lattice_dict: dict):
         self.lattices = coupled_lattice_dict
-        
+
     def to_tuple(self):
         return tuple(self.lattices.values())
+
+    def keys(self):
+        return self.lattices.keys()
+
+    def __iter__(self):
+        return iter(self.lattices.items())
 
     def __getitem__(self, key) -> Lattice:
         return self.lattices[key]
@@ -151,9 +169,7 @@ class CoupledLattices(abc.ABC):
         return len(self.lattices)
 
     @abc.abstractmethod
-    def initialize(
-        self, dist_functions: Sequence[chex.Array], *args, **kwargs
-    ) -> Sequence[chex.Array]:
+    def initialize(self, *args, **kwargs) -> Sequence[chex.Array]:
         pass
 
     @abc.abstractmethod
@@ -172,33 +188,31 @@ class CoupledLattices(abc.ABC):
 
 
 class ThermalFluidLattice(CoupledLattices):
-    Macroscopics = namedtuple(f'ThermalFluidMacroscopics', ('rho', 'T', "u"))
+    Macroscopics = namedtuple(f"ThermalFluidMacroscopics", ("rho", "T", "u"))
 
-    def __init__(self, fluid_stencil, thermal_stencil):
+    def __init__(
+        self, fluid_stencil, thermal_stencil, timestep, gravity, thermal_expansion
+    ):
         coupled_lattice_dict = {
-            "fluid": FluidLattice(fluid_stencil),
-            "thermal": FluidLattice(thermal_stencil),
+            "FluidLattice": FluidLattice(fluid_stencil),
+            "ThermalLattice": FluidLattice(thermal_stencil),
         }
+        self.timestep = timestep
+        self.gravity = gravity
+        self.thermal_expansion = thermal_expansion
         super().__init__(coupled_lattice_dict)
 
     @partial(jax.jit, static_argnums=(0))
-    def initialize(self, rho: chex.Array, T: chex.Array, u: chex.Array) -> Sequence[chex.Array]:
-        """Initialize the distribution function with the equilibrium distribution
-        corresponding to the given density, temperature and velocity.
-
-        Args:
-            rho (chex.Array): The prescribed density of the fluid.
-            T (chex.Array): The prescribed temperature of the fluid.
-            u (chex.Array): The prescribed velocity of the fluid.
-
-        Returns:
-            Array: The initialized distribution function.
-        """
+    def initialize(
+        self, rho: chex.Array, T: chex.Array, u: chex.Array
+    ) -> Sequence[chex.Array]:
         return self.equilibrium(rho, T, u)
 
     @dispatch(jax.Array, jax.Array, jax.Array)
     @partial(jax.jit, static_argnums=(0))
-    def equilibrium(self, rho: chex.Array, T: chex.Array, u: chex.Array) -> Sequence[chex.Array]:
+    def equilibrium(
+        self, rho: chex.Array, T: chex.Array, u: chex.Array
+    ) -> Sequence[chex.Array]:
         """Computes the equilibrium distribution functions of the coupled lattixes
 
         Args:
@@ -210,12 +224,13 @@ class ThermalFluidLattice(CoupledLattices):
             Sequence[chex.Array]: The equilibrium distribution function for the fluid and
                 thermal lattices.
         """
+        ret = {
+            "FluidLattice": self["FluidLattice"].equilibrium(rho, u),
+            "ThermalLattice": self["ThermalLattice"].equilibrium(T, u),
+        }
 
-        fluid_eq = self["fluid"].equilibrium(rho, u)
-        thermal_eq = self["thermal"].equilibrium(T, u)
+        return ret
 
-        return [fluid_eq, thermal_eq]
-    
     @dispatch(Iterable)
     @partial(jax.jit, static_argnums=(0))
     def equilibrium(self, fluid_state) -> Sequence[chex.Array]:
@@ -226,82 +241,63 @@ class ThermalFluidLattice(CoupledLattices):
         self,
         rho: chex.Array,
         T: chex.Array,
-        gravity: chex.Array,
-        thermal_expansion: float,
-        timestep: float,
     ) -> Sequence[Union[chex.Scalar, chex.Array]]:
         """Computes the force on the fluid due to gravity.
 
         Args:
             rho: The density of the fluid.
             T: The temperature of the fluid.
-            gravity: The gravitational acceleration vector.
-            thermal_expansion: The thermal expansion coefficient of the fluid.
-            timestep: The timestep of the simulation.
 
         Returns:
             The force on the fluid due to gravity.
         """
-        stencil = self["fluid"].stencil
+        stencil = self["FluidLattice"].stencil
 
         # Project the gravity vector onto the lattice directions
-        e_dot_f = jnp.einsum("dQ, d->Q", stencil.e, gravity)[
+        e_dot_f = jnp.einsum("dQ, d->Q", stencil.e, self.gravity)[
             jnp.newaxis, jnp.newaxis, :
         ]
 
-        scalar = timestep / stencil.cs**2 * thermal_expansion
+        scalar = self.timestep / stencil.cs**2 * self.thermal_expansion
 
         # Compute the force
         fluid_force = (
-            scalar
-            * rho
-            * T
-            * e_dot_f
-            * stencil.w[jnp.newaxis, jnp.newaxis, :]
+            scalar * rho * T * e_dot_f * stencil.w[jnp.newaxis, jnp.newaxis, :]
         )
         thermal_force = 0.0
 
-        return fluid_force, thermal_force
+        ret = {
+            "FluidLattice": fluid_force,
+            "ThermalLattice": thermal_force,
+        }
+
+        return ret
 
     @partial(jax.jit, static_argnums=(0))
-    def collision_terms(
-        self,
-        dist_functions: Sequence[chex.Array],
-        gravity: chex.Array,
-        thermal_expansion: chex.Scalar,
-        timestep: chex.Scalar,
-    ) -> Sequence:
+    def collision_terms(self, state_dict: Dict[str, LBMState]) -> Sequence:
         """Compute the collision terms for the coupled fluid and thermal lattices.
 
         Args:
             dist_functions (Sequence[chex.Array]): The distribution functions of the
                 fluid and thermal lattices.
-            gravity (chex.Array): The gravity.
-            thermal_expansion (chex.Scalar): The thermal expansion coefficient.
 
         Returns:
             Sequence: The equilibrium and force terms for
                 the fluid and thermal lattices.
         """
         # Get the moments of the distribution functions
-        fluid_state = self.get_macroscopics(dist_functions)
+        fluid_state = self.get_macroscopics(state_dict)
 
         # Compute the equilibrium terms
         equilibrium = self.equilibrium(fluid_state.rho, fluid_state.T, fluid_state.u)
 
         # Compute the force terms
-        force = self.force(
-            rho=fluid_state.rho,
-            T=fluid_state.T,
-            gravity=gravity,
-            thermal_expansion=thermal_expansion,
-            timestep=timestep,
-        )
+        force = self.force(rho=fluid_state.rho, T=fluid_state.T)
 
         return equilibrium, force
 
     @partial(jax.jit, static_argnums=(0))
-    def get_macroscopics(self, dist_functions: Sequence[chex.Array]) -> Sequence[chex.Array]:
+    def get_macroscopics(self, state_dict: Dict[str, LBMState]) -> Sequence[chex.Array]:
         """Get the macroscopic quantities for the coupled NSE and ADE lattices.
 
         Args:
@@ -311,8 +307,11 @@ class ThermalFluidLattice(CoupledLattices):
         Returns:
             Sequence[chex.Array]: The macroscopic quantities for the NSE and ADE lattices.
         """
-        rho = self["fluid"].get_moment(dist_functions[0], order=0)[..., jnp.newaxis]
-        u = self["fluid"].get_moment(dist_functions[0], order=1) / rho
-        T = self["thermal"].get_moment(dist_functions[1], order=0)[..., jnp.newaxis]
+        df_fluid = state_dict["FluidLattice"].df
+        df_thermal = state_dict["ThermalLattice"].df
+
+        rho = self["FluidLattice"].get_moment(df_fluid, order=0)[..., jnp.newaxis]
+        u = self["FluidLattice"].get_moment(df_fluid, order=1) / rho
+        T = self["ThermalLattice"].get_moment(df_thermal, order=0)[..., jnp.newaxis]
 
         return self.Macroscopics(rho, T, u)

@@ -29,7 +29,7 @@ img = hv.DynamicMap(curl_image, streams=[stream]).opts(
     hv.opts.Image(
         cmap="RdBu_r",
         symmetric=True,
-        clim=(-5, 5),
+        clim=(-2, 2),
         xlim=(xmin, xmax),
         ylim=(ymin, ymax),
         colorbar=True,
