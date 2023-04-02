@@ -115,14 +115,14 @@ class ThermalFluidControl(LBMEnv):
             lbm.BounceBackBoundary("top", sim.top), "ThermalLattice"
         )
         sim.set_boundary_conditions(
-            lbm.InletBoundary("left", sim.left), "ThermalLattice"
+            lbm.BounceBackBoundary("right", sim.right), "ThermalLattice"
         )
         sim.set_boundary_conditions(
-            lbm.InletBoundary("right", sim.right), "ThermalLattice"
+            lbm.InletBoundary("left", sim.left), "ThermalLattice"
         )
 
+
         sim.update_boundary_condition("left", {"m": 0.0}, "ThermalLattice")
-        sim.update_boundary_condition("right", {"m": 0.0}, "ThermalLattice")
 
         return sim
 

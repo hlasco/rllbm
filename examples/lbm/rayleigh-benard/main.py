@@ -106,18 +106,19 @@ if __name__ == "__main__":
     )
 
     # Set the boundary conditions
-    fluid_bc = lbm.BounceBackBoundary(
-        "Walls", sim.bottom | sim.top | sim.left | sim.right
+    sim.set_boundary_conditions(
+        lbm.BounceBackBoundary(
+            "walls", sim.bottom | sim.top | sim.left | sim.right
+        ),
+        "FluidLattice",
     )
-    sim.set_boundary_conditions(fluid_bc, "FluidLattice")
 
     sim.set_boundary_conditions(lbm.BounceBackBoundary("bot", sim.bottom), "ThermalLattice")
     sim.set_boundary_conditions(lbm.BounceBackBoundary("top", sim.top), "ThermalLattice")
+    sim.set_boundary_conditions(lbm.BounceBackBoundary("right", sim.right), "ThermalLattice")
     sim.set_boundary_conditions(lbm.InletBoundary("left", sim.left), "ThermalLattice")
-    sim.set_boundary_conditions(lbm.InletBoundary("right", sim.right), "ThermalLattice")
 
     sim.update_boundary_condition("left", {"m": 0.0}, "ThermalLattice")
-    sim.update_boundary_condition("right", {"m": 0.0}, "ThermalLattice")
 
     init_ncfile(nc_path, sim)
 
