@@ -1,9 +1,10 @@
 from __future__ import annotations
 from functools import partial
 
-from typing import TYPE_CHECKING, Dict, Union
+from typing import TYPE_CHECKING, Dict, Union, Sequence
 
 import jax
+import chex
 from jax import numpy as jnp
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices

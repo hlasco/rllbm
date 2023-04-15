@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
     sim.set_initial_conditions(
         rho=jnp.ones((nx, ny, 1)),
-        T=0*jax.random.uniform(key, (nx, ny, 1), minval=-0.05, maxval=0.05),
+        T=jax.random.uniform(key, (nx, ny, 1), minval=-0.05, maxval=0.05),
         u=jnp.zeros((nx, ny, 2)),
     )
 
@@ -97,13 +97,11 @@ if __name__ == "__main__":
         ),
         "FluidLattice",
     )
-    sim.set_boundary_conditions(lbm.BounceBackBoundary("left", sim.left), "ThermalLattice")
-    sim.set_boundary_conditions(lbm.BounceBackBoundary("right", sim.right), "ThermalLattice")
 
     sim.set_boundary_conditions(lbm.InletBoundary("bot", sim.bottom), "ThermalLattice")
     sim.set_boundary_conditions(lbm.InletBoundary("top", sim.top), "ThermalLattice")
 
-    sim.update_boundary_condition("left", {"m": 0.5}, "ThermalLattice")
+    sim.update_boundary_condition("bot", {"m": 0.5}, "ThermalLattice")
     sim.update_boundary_condition("top", {"m": -0.5}, "ThermalLattice")
 
     init_ncfile(nc_path, sim)
