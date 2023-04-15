@@ -12,19 +12,6 @@ import warnings
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
 
-@jax.jit
-def get_wall_temperature(t, x, freq_x0=0.005, freq_amp=0.02, amp=0.5, width=0.1):
-    x_min = x[0]
-    x_max = x[-1]
-
-    x_ = (x - x_min) / (x_max - x_min)
-
-    x_peak = 0.5 * (1 + jnp.sin(2 * jnp.pi * t * freq_x0))
-    amp = amp * jnp.sin(x_ * jnp.pi) * jnp.cos(2 * jnp.pi * t * freq_amp)
-    ret = amp * jnp.exp(-0.5 * ((x_ - x_peak) / (width)) ** 2)
-    return ret
-
-
 def init_ncfile(path, sim):
     """Creates a new netCDF4 file, using the specified path and simulation."""
     with netCDF4.Dataset(path, "w", format="NETCDF4") as ncfile:
@@ -49,12 +36,11 @@ def init_ncfile(path, sim):
         ncfile.variables["x"][:] = sim.x
         ncfile.variables["y"][:] = sim.y
 
-
-def write_ncfile(path, time_index, time, temperature):
+def write_ncfile(path, time_index, time, state):
     """Write the temperature data to a netCDF file."""
     with netCDF4.Dataset(path, "a") as ncfile:
         ncfile.variables["t"][time_index] = time
-        ncfile.variables["temp"][time_index, :, :] = temperature[:, :, 0]
+        ncfile.variables["temp"][time_index, :, :] = state.T[:, :, 0]
 
 
 if __name__ == "__main__":
@@ -64,21 +50,19 @@ if __name__ == "__main__":
 
     domain = lbm.Domain(shape=(nx, ny), bounds=(0.0, 1.0, 0.0, 1.0))
 
-    dx = domain.dx
-    dt = dx**0.5
-
     prandtl = 0.71
     rayleigh = 1e8
-    thermal_expansion = 0.005
-    gravity = 9.81
-    buoyancy = gravity * thermal_expansion
+    buoyancy = 0.0001
+
+    dx = domain.dx
+    dt = (buoyancy * dx) ** 0.5
 
     # Collision parameters
-    viscosity = (buoyancy * prandtl / rayleigh) ** 0.5 * dt / dx**2
+    viscosity = (prandtl / rayleigh) ** 0.5 * dt / dx**2
     kappa = viscosity / prandtl
 
-    convection_timescale = 1.0 / buoyancy
-    run_time = 100 * convection_timescale
+    convection_timescale = 1.0
+    run_time = 100
     # Number of steps to run
     steps = int(run_time / dt)
     # Frequency of writing to the netCDF file
@@ -93,47 +77,46 @@ if __name__ == "__main__":
     lattice = lbm.ThermalFluidLattice(
         fluid_stencil=lbm.D2Q9,
         thermal_stencil=lbm.D2Q5,
-        timestep=dt,
-        gravity=jnp.array([0, gravity]),
-        thermal_expansion=thermal_expansion,
+        buoyancy=jnp.array([0, buoyancy]),
     )
 
     sim = lbm.Simulation(domain, lattice, omegas)
+    seed = 0
+    key = jax.random.PRNGKey(seed)
+
     sim.set_initial_conditions(
         rho=jnp.ones((nx, ny, 1)),
-        T=jnp.zeros((nx, ny, 1)),
+        T=0*jax.random.uniform(key, (nx, ny, 1), minval=-0.05, maxval=0.05),
         u=jnp.zeros((nx, ny, 2)),
     )
 
     # Set the boundary conditions
     sim.set_boundary_conditions(
         lbm.BounceBackBoundary(
-            "walls", sim.bottom | sim.top | sim.left | sim.right
+            "walls", sim.bottom | sim.top
         ),
         "FluidLattice",
     )
-
-    sim.set_boundary_conditions(lbm.BounceBackBoundary("bot", sim.bottom), "ThermalLattice")
-    sim.set_boundary_conditions(lbm.BounceBackBoundary("top", sim.top), "ThermalLattice")
+    sim.set_boundary_conditions(lbm.BounceBackBoundary("left", sim.left), "ThermalLattice")
     sim.set_boundary_conditions(lbm.BounceBackBoundary("right", sim.right), "ThermalLattice")
-    sim.set_boundary_conditions(lbm.InletBoundary("left", sim.left), "ThermalLattice")
 
-    sim.update_boundary_condition("left", {"m": 0.0}, "ThermalLattice")
+    sim.set_boundary_conditions(lbm.InletBoundary("bot", sim.bottom), "ThermalLattice")
+    sim.set_boundary_conditions(lbm.InletBoundary("top", sim.top), "ThermalLattice")
+
+    sim.update_boundary_condition("left", {"m": 0.5}, "ThermalLattice")
+    sim.update_boundary_condition("top", {"m": -0.5}, "ThermalLattice")
 
     init_ncfile(nc_path, sim)
 
     for i in trange(steps):
         sim.step()
         t = i * dt
-        wall_temperature = get_wall_temperature(t / convection_timescale, sim.y)
-        sim.update_boundary_condition("left", {"m": wall_temperature}, "ThermalLattice")
 
         if i % io_frequency == 0:
-            fluid_state = sim.get_macroscopics()
-
-            if jnp.isnan(fluid_state.T).any():
+            time_index = i // io_frequency
+            write_ncfile(nc_path, time_index, t, sim.fluid_state)
+            if jnp.isnan(sim.fluid_state.T).any():
                 print("NaNs detected, stopping simulation.")
                 break
 
-            time_index = i // io_frequency
-            write_ncfile(nc_path, time_index, t, fluid_state.T)
+

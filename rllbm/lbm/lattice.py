@@ -126,9 +126,7 @@ class FluidLattice(Lattice):
         return 0.0
 
     @partial(jax.jit, static_argnums=(0))
-    def collision_terms(self, state_dict) -> Sequence[chex.Array]:
-        df = state_dict[self.name].df
-        fluid_state = self.get_macroscopics(df)
+    def collision_terms(self, fluid_state) -> Sequence[chex.Array]:
         df_equilibrium = self.equilibrium(fluid_state.rho, fluid_state.u)
         df_force = self.force()
         return df_equilibrium, df_force
@@ -191,15 +189,13 @@ class ThermalFluidLattice(CoupledLattices):
     Macroscopics = namedtuple(f"ThermalFluidMacroscopics", ("rho", "T", "u"))
 
     def __init__(
-        self, fluid_stencil, thermal_stencil, timestep, gravity, thermal_expansion
+        self, fluid_stencil, thermal_stencil, buoyancy,
     ):
         coupled_lattice_dict = {
-            "FluidLattice": FluidLattice(fluid_stencil),
-            "ThermalLattice": FluidLattice(thermal_stencil),
+            "FluidLattice": FluidLattice(fluid_stencil, "Fluid"),
+            "ThermalLattice": FluidLattice(thermal_stencil, "Thermal"),
         }
-        self.timestep = timestep
-        self.gravity = gravity
-        self.thermal_expansion = thermal_expansion
+        self.buoyancy = buoyancy
         super().__init__(coupled_lattice_dict)
 
     @partial(jax.jit, static_argnums=(0))
@@ -252,17 +248,15 @@ class ThermalFluidLattice(CoupledLattices):
             The force on the fluid due to gravity.
         """
         stencil = self["FluidLattice"].stencil
+        cs = stencil.cs
 
         # Project the gravity vector onto the lattice directions
-        e_dot_f = jnp.einsum("dQ, d->Q", stencil.e, self.gravity)[
-            jnp.newaxis, jnp.newaxis, :
-        ]
-
-        scalar = self.timestep / stencil.cs**2 * self.thermal_expansion
+        e_dot_b = jnp.einsum("dQ, d->Q", stencil.e, self.buoyancy)
+        e_dot_b = e_dot_b[jnp.newaxis, jnp.newaxis, :]
 
         # Compute the force
         fluid_force = (
-            scalar * rho * T * e_dot_f * stencil.w[jnp.newaxis, jnp.newaxis, :]
+            rho * T * e_dot_b * stencil.w[jnp.newaxis, jnp.newaxis, :] / cs ** 2
         )
         thermal_force = 0.0
 
@@ -274,7 +268,7 @@ class ThermalFluidLattice(CoupledLattices):
         return ret
 
     @partial(jax.jit, static_argnums=(0))
-    def collision_terms(self, state_dict: Dict[str, LBMState]) -> Sequence:
+    def collision_terms(self, fluid_state) -> Sequence:
         """Compute the collision terms for the coupled fluid and thermal lattices.
 
         Args:
@@ -285,8 +279,6 @@ class ThermalFluidLattice(CoupledLattices):
             Sequence: The equilibrium and force terms for
                 the fluid and thermal lattices.
         """
-        # Get the moments of the distribution functions
-        fluid_state = self.get_macroscopics(state_dict)
 
         # Compute the equilibrium terms
         equilibrium = self.equilibrium(fluid_state.rho, fluid_state.T, fluid_state.u)

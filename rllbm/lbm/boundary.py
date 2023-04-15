@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Dict, Union, Sequence
+from typing import TYPE_CHECKING, Dict, Union, Sequence, Any
 
 from functools import partial
 from multipledispatch import dispatch
@@ -10,6 +10,7 @@ from multipledispatch import dispatch
 import chex
 import jax
 from jax import numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 from rllbm.lbm.lattice import Lattice, CoupledLattices
 
@@ -24,16 +25,27 @@ __all__ = [
     "apply_boundary_conditions",
 ]
 
-
+@register_pytree_node_class
 class Boundary(abc.ABC):
     _name: str
     _mask: chex.Array
     _size: int
 
-    def __init__(self, name: str, mask: chex.Array) -> None:
+    def __init__(self, name: str, mask: chex.Array, _unflatten: bool=False, _size: int=None) -> None:
         self._name = name
         self._mask = mask
-        self._size = jnp.sum(mask, dtype=jnp.int32)
+        if _unflatten:
+            self._size = _size
+        else:
+            self._size = jnp.sum(mask, dtype=jnp.int32)
+
+    def set_param(self, key: str, val: Any) -> None:
+        if hasattr(self, key):
+            setattr(self, key, val)
+        else:
+            raise ValueError(
+                f"Attempted to update unknown parameter '{key}' of boundary '{self._name}'."
+            )
 
     @abc.abstractmethod
     def __call__(self, lattice: Lattice, df: chex.Array, *args, **kwargs) -> chex.Array:
@@ -69,18 +81,38 @@ class Boundary(abc.ABC):
         """
         pass
 
+    def tree_flatten(self):
+        # arrays / dynamic values
+        children = []
+        # static values
+        aux_data = {
+            "name": self._name,
+            "mask": self._mask, 
+            "_size": self._size,
+        }
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        unflattened = cls(
+            name=aux_data["name"],
+            mask=aux_data["mask"],
+            _size=aux_data["_size"],
+            _unflatten=True
+        )
+        return unflattened
+
+@register_pytree_node_class
 class BoundaryDict:
     _boundary_dict: Dict[str, Boundary]
-    _params: Dict[str, Dict]
+    _collision_mask: chex.Array = True
+    _stream_mask: chex.Array = True
 
     def __init__(
         self,
         boundary: Union[Boundary, Sequence[Boundary]] = None,
-        params: Dict[str, Dict] = None,
     ):
         self._boundary_dict = dict()
-        self._params = params or dict()
         if boundary is not None:
             self.add(boundary)
 
@@ -92,8 +124,10 @@ class BoundaryDict:
             value (Dict): The parameters of the boundary.
         """
         if boundary_name not in self._boundary_dict:
-            raise ValueError(f"Boundary {boundary_name} does not exist.")
-        self._params[boundary_name] = value
+            raise ValueError(f"Boundary '{boundary_name}' does not exist.")
+
+        for key, val in value.items():
+            self._boundary_dict[boundary_name].set_param(key, val)
 
     @dispatch(Boundary)
     def add(self, boundary: Boundary) -> None:
@@ -105,6 +139,7 @@ class BoundaryDict:
         if boundary.name in self._boundary_dict:
             raise ValueError(f"Boundary {boundary.name} already exists.")
         self._boundary_dict[boundary.name] = boundary
+        self.update_masks()
 
     @dispatch(Iterable)
     def add(self, boundary: Sequence[Boundary]) -> None:
@@ -114,9 +149,7 @@ class BoundaryDict:
             boundary (Sequence[Boundary]): The boundaries to add.
         """
         for bdy in boundary:
-            if bdy.name in self._boundary_dict:
-                raise ValueError(f"Boundary {bdy.name} already exists.")
-            self._boundary_dict[bdy.name] = bdy
+            self.add(bdy)
 
     @partial(jax.jit, static_argnums=(1))
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
@@ -131,49 +164,46 @@ class BoundaryDict:
                 conditions.
         """
         for name, bdy in self._boundary_dict.items():
-            if name in self._params:
-                df = bdy(lattice, df, **self._params[name])
-            else:
-                df = bdy(lattice, df)
+            df = bdy(lattice, df)
         return df
 
-    @property
-    def collision_mask(self) -> chex.Array:
-        """Return the mask of fluid nodes on which the collision step is performed. The
-        mask corresponds to the logical AND of the collision masks of all the
-        boundaries.
-
-        Returns:
-            Array: The collision mask.
-        """
+    def update_masks(self) -> None:
         masks = jnp.array(
             [bdy.collision_mask for bdy in self._boundary_dict.values()], dtype=bool
         )
-        return jnp.prod(masks, dtype=bool, axis=0)
+        self._collision_mask = jnp.prod(masks, dtype=bool, axis=0)[..., jnp.newaxis]
 
-    @property
-    def stream_mask(self) -> chex.Array:
-        """Return the mask of fluid nodes on which the streaming step is performed. The
-        mask corresponds to the logical AND of the stream masks of all the boundaries.
-
-        Returns:
-            chex.Array: The stream mask.
-        """
         masks = jnp.array(
             [b.stream_mask for b in self._boundary_dict.values()], dtype=bool
         )
-        return jnp.prod(masks, dtype=bool, axis=0)
+        self._stream_mask = jnp.prod(masks, dtype=bool, axis=0)
 
-    def _tree_flatten(self):
-        children = (self._params,)  # arrays / dynamic values
-        aux_data = {"boundary": list(self._boundary_dict.values())}  # static values
+    @property
+    def collision_mask(self) -> chex.Array:
+        return self._collision_mask
+
+    @property
+    def stream_mask(self) -> chex.Array:
+        return self._stream_mask
+
+    def tree_flatten(self):
+        children = (self._boundary_dict,)
+        aux_data = {
+            "stream_mask": self.stream_mask,
+            "collision_mask": self.collision_mask,
+        }
         return (children, aux_data)
 
     @classmethod
-    def _tree_unflatten(cls, aux_data, children):
-        return cls(params=children[0], **aux_data)
+    def tree_unflatten(cls, aux_data, children):
+        unflattened = cls()
+        unflattened._boundary_dict = children[0]
+        unflattened._stream_mask = aux_data["stream_mask"]
+        unflattened._collision_mask = aux_data["collision_mask"]
+        return unflattened
 
 
+@register_pytree_node_class
 class BounceBackBoundary(Boundary):
     """A bounce back boundary condition. The distribution function is set to the
     opposite distribution function on the boundary nodes. It can be used to model a
@@ -193,8 +223,12 @@ class BounceBackBoundary(Boundary):
                 condition.
         """
         for i in range(lattice.Q):
-            df = df.at[self._mask, i].set(
-                df[self._mask, lattice.stencil.opposite[i]],
+            df = df.at[...,i].set(
+                jnp.where(
+                    self._mask,
+                    df[..., lattice.stencil.opposite[i]],
+                    df[..., i],
+                )
             )
         return df
 
@@ -208,32 +242,32 @@ class BounceBackBoundary(Boundary):
         # Streaming is performed on all nodes except the boundary nodes.
         return ~self._mask
 
-
+@register_pytree_node_class
 class InletBoundary(Boundary):
     """An inlet boundary condition. The distribution function is set to the
     equilibrium distribution function on the boundary nodes. It can be used to model
     an inlet.
     """
+    m = 1.0
+    u = jnp.array([0.0, 0.0])
 
     @partial(jax.jit, static_argnums=(0, 1))
     def __call__(
         self,
         lattice: Lattice,
-        dist_function: chex.Array,
-        m: Union[chex.Array, chex.Scalar] = 1.0,
-        u: chex.Array = jnp.array([0.0, 0.0]),
+        df: chex.Array,
     ) -> chex.Array:
         """Apply the inlet boundary condition to the given distribution function.
         Args:
             lattice (Lattice): The lattice.
-            dist_function (chex.Array): The distribution function.
-            m (chex.Array): The mean of the distribution function.
-            u (chex.Array): The velocity of the distribution function.
+            df (chex.Array): The distribution function.
 
         Returns:
             Array: The distribution function after the application of the boundary
                 condition.
         """
+        m = self.m
+        u = self.u
         if isinstance(m, chex.Scalar):
             m = m * jnp.ones((self._size))
         m = m[..., jnp.newaxis]
@@ -241,11 +275,17 @@ class InletBoundary(Boundary):
         if u.ndim == 1:
             u = jnp.ones((self._size, lattice.D)) * u[jnp.newaxis, :]
 
-        equilibrium = lattice.equilibrium(m, u)
+        eq = lattice.equilibrium(m, u)
 
         for i in range(lattice.Q):
-            dist_function = dist_function.at[self._mask, i].set(equilibrium[:, i])
-        return dist_function
+            df = df.at[...,i].set(
+                jnp.where(
+                    self._mask,
+                    eq[..., i],
+                    df[..., i],
+                )
+            )           
+        return df
 
     @property
     def collision_mask(self):
@@ -257,14 +297,41 @@ class InletBoundary(Boundary):
         # Streaming is performed on all nodes except the boundary nodes.
         return ~self._mask
 
+    def tree_flatten(self):
+        # arrays / dynamic values
+        children = (self.m, self.u)
+        # static values
+        aux_data = {
+            "name": self._name,
+            "mask": self._mask, 
+            "_size": self._size,
+        }
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        unflattened = cls(
+            name=aux_data["name"],
+            mask=aux_data["mask"],
+            _size=aux_data["_size"],
+            _unflatten=True
+        )
+        unflattened.m = children[0]
+        unflattened.u = children[1]
+        return unflattened
+
+@register_pytree_node_class
 class OutletBoundary(Boundary):
     """An outlet boundary condition."""
 
-    def __init__(self, name, mask: chex.Array, direction: Sequence[int]) -> None:
-        self.direction = jnp.array(direction, dtype=jnp.int8)
-        self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
-        super().__init__(name, mask)
+    def __init__(self, name, mask: chex.Array, direction: Sequence[int], _unflatten: bool=False, neighbor_mask=None, _size: int=None) -> None:
+        if _unflatten:
+            self.direction = direction
+            self.neighbor_mask = neighbor_mask
+        else:
+            self.direction = jnp.array(direction, dtype=jnp.int8)
+            self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
+        super().__init__(name, mask, _unflatten, _size)
 
     @partial(jax.jit, static_argnums=(0, 1))
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
@@ -280,7 +347,13 @@ class OutletBoundary(Boundary):
         fluid_state = lattice.get_macroscopics(df[self.neighbor_mask, :])
         eq = lattice.equilibrium(fluid_state)
         for i in range(lattice.Q):
-            df = df.at[self._mask, i].set(eq[:, i])
+            df = df.at[...,i].set(
+                jnp.where(
+                    self._mask,
+                    eq[..., i],
+                    df[..., i],
+                )
+            )
         return df
 
     @property
@@ -292,6 +365,31 @@ class OutletBoundary(Boundary):
     def stream_mask(self):
         # Streaming is performed on all nodes except the boundary nodes.
         return ~self._mask
+
+    def tree_flatten(self):
+        # arrays / dynamic values
+        children = []
+        # static values
+        aux_data = {
+            "name": self._name,
+            "mask": self._mask, 
+            "direction": self.direction,
+            "neighbor_mask": self.neighbor_mask,
+            "_size": self._size,
+        }
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        unflattened = cls(
+            name=aux_data["name"],
+            mask=aux_data["mask"],
+            direction=aux_data["direction"],
+            neighbor_mask=aux_data["neighbor_mask"],
+            _size=aux_data["_size"],
+            _unflatten=True
+        )
+        return unflattened
 
 
 @partial(jax.jit, static_argnums=(0))
@@ -320,7 +418,3 @@ def apply_boundary_conditions(
 
     return state_dict
 
-
-jax.tree_util.register_pytree_node(
-    BoundaryDict, BoundaryDict._tree_flatten, BoundaryDict._tree_unflatten
-)

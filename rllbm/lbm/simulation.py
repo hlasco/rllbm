@@ -3,6 +3,7 @@ from typing import Union, Sequence, Dict
 from dataclasses import dataclass
 
 import chex
+import jax
 
 from jax import jit
 from jax import numpy as jnp
@@ -13,8 +14,6 @@ from rllbm.lbm.boundary import Boundary, BoundaryDict, apply_boundary_conditions
 from rllbm.lbm.stream import stream
 
 __all__ = ["Domain", "Simulation", "LBMState"]
-
-import chex
 
 
 @chex.dataclass
@@ -91,8 +90,9 @@ class Simulation:
         lattice: Union[Lattice, CoupledLattices],
         omegas: Union[chex.Scalar, Dict],
     ) -> None:
-        self._domain = domain
+        self.domain = domain
 
+        self.fluid_state = None
         self.state_dict = {}
         self.lattice = lattice
 
@@ -115,13 +115,9 @@ class Simulation:
                 f"but got {type(lattice)} instead."
             )
 
-    @property
-    def domain(self):
-        return self._domain
-
     def __getattr__(self, name):
         try:
-            return getattr(self._domain, name)
+            return getattr(self.domain, name)
         except AttributeError:
             raise AttributeError(
                 f"'{type(self).__name__}' object has no attribute {name}"
@@ -134,6 +130,8 @@ class Simulation:
                 self.state_dict[lattice_name].df = df[lattice_name]
         else:
             self.state_dict[self.lattice.name].df = df
+
+        self.fluid_state = self.lattice.get_macroscopics(self.state_dict)
 
     def set_boundary_conditions(
         self,
@@ -164,14 +162,14 @@ class Simulation:
         self.state_dict[lattice_name].bc.set_params(bc_name, params)
 
     def step(self):
-        self.state_dict = self._step(self.state_dict)
+        self.state_dict, self.fluid_state = self._step(self.state_dict)
 
     @partial(jit, static_argnums=(0))
     def _step(self, state_dict: Dict[str, LBMState]) -> Dict[str, LBMState]:
-        state_dict = collide(self.lattice, state_dict)
-        state_dict = stream(self.lattice, state_dict)
         state_dict = apply_boundary_conditions(self.lattice, state_dict)
-        return state_dict
-
-    def get_macroscopics(self) -> Sequence[chex.Array]:
-        return self.lattice.get_macroscopics(self.state_dict)
+        
+        fluid_state = self.lattice.get_macroscopics(state_dict)
+        state_dict = collide(self.lattice, state_dict, fluid_state)
+        state_dict = stream(self.lattice, state_dict)
+        
+        return state_dict, fluid_state

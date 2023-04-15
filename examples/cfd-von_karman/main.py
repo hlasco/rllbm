@@ -123,15 +123,13 @@ if __name__ == "__main__":
         t = i * dt
 
         if i % io_frequency == 0:
-            fluid_state = sim.get_macroscopics()
-
-            _, dudy = jnp.gradient(fluid_state.u[..., 0], dx)
-            dvdx, _ = jnp.gradient(fluid_state.u[..., 1], dx)
+            _, dudy = jnp.gradient(sim.fluid_state.u[..., 0], dx)
+            dvdx, _ = jnp.gradient(sim.fluid_state.u[..., 1], dx)
             curl = dudy - dvdx
 
             time_index = i // io_frequency
             write_ncfile(nc_path, time_index, t, curl)
 
-            if jnp.isnan(fluid_state.u).any():
+            if jnp.isnan(sim.fluid_state.u).any():
                 print("NaNs detected, stopping simulation.")
                 break

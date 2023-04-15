@@ -13,7 +13,7 @@ class Stencil:
     e: chex.Array = jnp.array([])
     w: chex.Array = jnp.array([])
     opposite: chex.Array = jnp.array([])
-    cs: float = 0.0
+    cs: float = 1
 
     @classmethod
     @property
@@ -56,8 +56,8 @@ class D1Q3(Stencil):
     """
     e = jnp.array([[0, 1, -1]])
     w = jnp.array([2.0 / 3, 1.0 / 6, 1.0 / 6])
-    opposite = [0, 2, 1]
-    cs = 1 / jnp.sqrt(3)
+    opposite = jnp.array([0, 2, 1])
+    cs = 1.0
 
 
 class D2Q5(Stencil):
@@ -72,7 +72,7 @@ class D2Q5(Stencil):
     e = jnp.array([[0, 1, 0, -1, 0], [0, 0, 1, 0, -1]])
     w = jnp.array([1.0 / 3, 1.0 / 6, 1.0 / 6, 1.0 / 6, 1.0 / 6])
     opposite = jnp.array([0, 3, 4, 1, 2])
-    cs = 1 / jnp.sqrt(3)
+    cs = 1 / 3**0.5
 
 
 class D2Q9(Stencil):
@@ -99,4 +99,4 @@ class D2Q9(Stencil):
         ]
     )
     opposite = jnp.array([0, 3, 4, 1, 2, 7, 8, 5, 6])
-    cs = 1 / jnp.sqrt(3)
+    cs = 1 / 3**0.5

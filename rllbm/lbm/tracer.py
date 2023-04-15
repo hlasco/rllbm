@@ -5,6 +5,7 @@ from functools import partial
 import chex
 import jax
 from jax import numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 import numpy as np
 
@@ -41,7 +42,17 @@ class Tracer:
     def update_obs(self, obs):
         self.obs = obs
 
+    def flatten(self):
+        ret = jnp.concatenate(
+            [
+                self.x.flatten(),
+                self.obs.flatten(),
+            ]
+        )
 
+        return ret
+
+@register_pytree_node_class
 class TracerCollection:
     def __init__(self, tracers=None):
         if tracers is None:
@@ -124,6 +135,7 @@ class TracerCollection:
         sim: Simulation,
         shape: Iterable[int],
         stream: bool = True,
+        margin: float = 0.1,
     ):
         """Adds a grid of tracers to the tracer collection
 
@@ -138,8 +150,9 @@ class TracerCollection:
 
         linspaces = []
         for i in range(sim.dim):
-            start = sim.bounds[i * 2] + sim.dx
-            stop = sim.bounds[i * 2 + 1] - sim.dx
+            margin_i = int(margin*sim.shape[i])
+            start = sim.bounds[i * 2] + sim.dx * margin_i
+            stop = sim.bounds[i * 2 + 1] - sim.dx * margin_i
             size = shape[i]
             linspaces.append(jnp.linspace(start, stop, size))
 
@@ -158,19 +171,14 @@ class TracerCollection:
     def set_tracer(self, tracer_type: str, idx: int, tracer: Tracer):
         self.tracers[tracer_type][idx] = tracer
 
-    def _tree_flatten(self):
+    def tree_flatten(self):
         children = (self.tracers,)  # arrays / dynamic values
         aux_data = {}  # static values
         return (children, aux_data)
 
     @classmethod
-    def _tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(cls, aux_data, children):
         return cls(*children, **aux_data)
-
-
-jax.tree_util.register_pytree_node(
-    TracerCollection, TracerCollection._tree_flatten, TracerCollection._tree_unflatten
-)
 
 
 @partial(jax.jit, static_argnums=(0))

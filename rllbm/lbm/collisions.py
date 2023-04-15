@@ -16,10 +16,10 @@ __all__ = ["collide"]
 
 @partial(jax.jit, static_argnums=(0,))
 def collide(
-    lattice: Union[Lattice, CoupledLattices], state_dict: Dict[str, LBMState]
+    lattice: Union[Lattice, CoupledLattices], state_dict: Dict[str, LBMState], fluid_state: Sequence[chex.array],
 ) -> Dict[str, LBMState]:
     """Perform a BKG collision step."""
-    eqs, forces = lattice.collision_terms(state_dict)
+    eqs, forces = lattice.collision_terms(fluid_state)
 
     # Smagorinsky sgs model
     # fluid_state = lattice.get_macroscopics(state_dict)
@@ -34,7 +34,7 @@ def collide(
         else:
             eq, force = eqs[name], forces[name]
         state_dict[name].df = jnp.where(
-            state_dict[name].collision_mask[..., jnp.newaxis],
+            state_dict[name].collision_mask,
             state_dict[name].df
             - state_dict[name].omega * (state_dict[name].df - eq)
             + force,
