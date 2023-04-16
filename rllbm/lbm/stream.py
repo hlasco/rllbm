@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from functools import partial
 from typing import TYPE_CHECKING, Union, Dict
 
 import chex
-import jax
 
 from jax import numpy as jnp
 
@@ -16,7 +14,6 @@ if TYPE_CHECKING:
 __all__ = ["stream"]
 
 
-@partial(jax.jit, static_argnums=(0))
 def stream_df(lattice: Lattice, df: chex.Array, mask: chex.Array) -> chex.Array:
     """This function takes in a distribution function, and a mask, and streams the
     distribution function according to the mask. The mask allows to stream the distribution
@@ -46,7 +43,6 @@ def stream_df(lattice: Lattice, df: chex.Array, mask: chex.Array) -> chex.Array:
     return df
 
 
-@partial(jax.jit, static_argnums=(0))
 def stream(
     lattice: Union[Lattice, CoupledLattices], state_dict: Dict[str, LBMState]
 ) -> Dict[str, LBMState]:

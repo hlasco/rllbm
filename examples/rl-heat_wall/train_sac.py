@@ -10,7 +10,7 @@ from ray import tune
 import copy
 
 from ray.air.integrations.wandb import WandbLoggerCallback
-from rllbm.environment import VideoCallback
+from rllbm.lbmenv import VideoCallback
 
 from heat_wall_env import HeatWallEnv, HeatWallEnvConfig
 

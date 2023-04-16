@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rllbm.lbm import Simulation, TracerCollection, update_tracers
+from rllbm.lbm import Simulation
+from rllbm.utils import TracerCollection, update_tracers
 
 
 __all__ = ["LBMEnv"]

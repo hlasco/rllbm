@@ -12,14 +12,12 @@ from rllbm.lbm import (
     BounceBackBoundary,
     InletBoundary
 )
-from rllbm.environment import LBMEnv
+from rllbm.lbmenv import LBMEnv
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import SymLogNorm
 from matplotlib.ticker import LogFormatter 
 
-
-import io
 
 __all__ = ["HeatWallEnv", "HeatWallEnvConfig"]
 

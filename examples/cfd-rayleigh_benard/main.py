@@ -2,71 +2,75 @@ import jax.numpy as jnp
 import jax
 
 from rllbm import lbm as lbm
+from rllbm.utils import MPLVideoRenderer
+
 
 from tqdm.rich import trange
 from tqdm import TqdmExperimentalWarning
-import netCDF4
+
+from visualize import fig_constructor, fig_updater
 
 import warnings
+import wandb
 
 warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
+class Diagnostic:
+    def __init__(self, name, values):
+        self.name = name
+        self.min = jnp.min(values)
+        self.max = jnp.max(values)
+        self.mean = jnp.mean(values)
+        self.std = jnp.std(values)
+        
+    def log(self, log_step):
+        logpath = f"Diagnostics/{self.name}/"
+        wandb.log({logpath + "min": self.min}, step=log_step)
+        wandb.log({logpath + "max": self.max}, step=log_step)
+        wandb.log({logpath + "mean": self.mean}, step=log_step)
+        wandb.log({logpath + "std": self.std}, step=log_step)
 
-def init_ncfile(path, sim):
-    """Creates a new netCDF4 file, using the specified path and simulation."""
-    with netCDF4.Dataset(path, "w", format="NETCDF4") as ncfile:
-        ncfile.createDimension("nx", sim.shape[0])
-        ncfile.createDimension("ny", sim.shape[1])
-        ncfile.createDimension("time", None)
+def diagnostics(sim):
+    ret = [
+        Diagnostic("temperature", sim.fluid_state.T),
+        Diagnostic("density", sim.fluid_state.rho),
+        Diagnostic("velocity_x", sim.fluid_state.u[...,0]),
+        Diagnostic("velocity_y", sim.fluid_state.u[...,1]),
+    ]
+    return ret
 
-        ncfile.createVariable("x", "f4", ("nx",))
-        ncfile.createVariable("y", "f4", ("ny",))
-        ncfile.createVariable("t", "f4", ("time",))
-
-        ncfile.coordinates = "t x y"
-
-        ncfile.createVariable(
-            "temp",
-            "f4",
-            ("time", "nx", "ny"),
-            compression="zlib",
-            least_significant_digit=4,
-        ),
-
-        ncfile.variables["x"][:] = sim.x
-        ncfile.variables["y"][:] = sim.y
-
-def write_ncfile(path, time_index, time, state):
-    """Write the temperature data to a netCDF file."""
-    with netCDF4.Dataset(path, "a") as ncfile:
-        ncfile.variables["t"][time_index] = time
-        ncfile.variables["temp"][time_index, :, :] = state.T[:, :, 0]
+def main(n, pr, ra, buoy, log_wandb=False):
 
 
-if __name__ == "__main__":
-    nc_path = "outputs.nc"
+    if log_wandb:
+        wandb.init(
+            project="RLLBM-CFD",
+            group="Rayleigh-Benard",
+            config = {
+                "N": n,
+                "PR": pr,
+                "RA": ra,
+                "BOUY": buoy,
+            }
+        )
 
-    nx, ny = 64, 64
+    nx = ny = n
 
     domain = lbm.Domain(shape=(nx, ny), bounds=(0.0, 1.0, 0.0, 1.0))
 
-    prandtl = 0.71
-    rayleigh = 1e8
-    buoyancy = 0.0001
-
     dx = domain.dx
-    dt = (buoyancy * dx) ** 0.5
+    dt = (buoy * dx) ** 0.5
 
     # Collision parameters
-    viscosity = (prandtl / rayleigh) ** 0.5 * dt / dx**2
-    kappa = viscosity / prandtl
+    viscosity = (pr / ra) ** 0.5 * dt / dx**2
+    kappa = viscosity / pr
 
-    convection_timescale = 1.0
-    run_time = 100
+    convection_timescale = 1
+    run_time = 100*convection_timescale
     # Number of steps to run
     steps = int(run_time / dt)
     # Frequency of writing to the netCDF file
-    io_frequency = int(convection_timescale / dt)
+    io_frequency = int(0.2*convection_timescale / dt)
 
     omegas = {
         "FluidLattice": 1.0 / (3 * viscosity + 0.5),
@@ -77,7 +81,7 @@ if __name__ == "__main__":
     lattice = lbm.ThermalFluidLattice(
         fluid_stencil=lbm.D2Q9,
         thermal_stencil=lbm.D2Q5,
-        buoyancy=jnp.array([0, buoyancy]),
+        buoyancy=jnp.array([0, buoy]),
     )
 
     sim = lbm.Simulation(domain, lattice, omegas)
@@ -103,18 +107,42 @@ if __name__ == "__main__":
 
     sim.update_boundary_condition("bot", {"m": 0.5}, "ThermalLattice")
     sim.update_boundary_condition("top", {"m": -0.5}, "ThermalLattice")
-
-    init_ncfile(nc_path, sim)
-
+    
+    
+    renderer = MPLVideoRenderer(
+        fig_constructor=fig_constructor,
+        fig_updater=fig_updater,
+        live=False,
+    )
+    
     for i in trange(steps):
         sim.step()
         t = i * dt
 
         if i % io_frequency == 0:
-            time_index = i // io_frequency
-            write_ncfile(nc_path, time_index, t, sim.fluid_state)
+
             if jnp.isnan(sim.fluid_state.T).any():
                 print("NaNs detected, stopping simulation.")
                 break
+            
+            diags = diagnostics(sim)
+            if log_wandb:
+                log_step = i//io_frequency
+                [diag.log(log_step) for diag in diags]
+            renderer.render_frame(sim)
+    
+    fname = (
+        "rb_NX-{}_PR-{:.1e}_RA-{:.1e}_BUOY-{:.1e}.mp4"
+    ).format(nx, pr, ra, buoy)
+    
+    renderer.to_mp4(filename=fname, fps=15)
+    if log_wandb:
+        video = wandb.Video(fname)
+        wandb.log({"video": video})
+        wandb.finish()
+
+if __name__ == "__main__":    
+    for ra in [1e9]:
+        main(n=96, pr=0.71, ra=ra, buoy=0.0001, log_wandb=False)
 
 

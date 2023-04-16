@@ -1,5 +1,7 @@
 jaxlib
 jax
+torch
+ray[rllib]
 numpy
 tqdm
 rich
@@ -11,3 +13,4 @@ bokeh
 holoviews
 panel
 moviepy
+wandb

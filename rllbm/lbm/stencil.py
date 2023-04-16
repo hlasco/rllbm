@@ -1,8 +1,6 @@
 import string
-from functools import partial
 
 import chex
-import jax
 
 from jax import numpy as jnp
 
@@ -26,7 +24,6 @@ class Stencil:
         return cls.e.shape[1]
 
     @classmethod
-    @partial(jax.jit, static_argnums=(0, 2))
     def get_moment(cls, dist_function: chex.Array, order: int) -> chex.Array:
         """Returns the moment of the distribution function.
         """

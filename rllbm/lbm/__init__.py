@@ -4,4 +4,3 @@ from .lattice import *
 from .collisions import *
 from .stream import *
 from .simulation import *
-from .tracer import *

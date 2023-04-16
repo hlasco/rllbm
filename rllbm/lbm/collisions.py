@@ -1,9 +1,7 @@
 from __future__ import annotations
-from functools import partial
 
 from typing import TYPE_CHECKING, Dict, Union, Sequence
 
-import jax
 import chex
 from jax import numpy as jnp
 
@@ -15,7 +13,6 @@ if TYPE_CHECKING:
 __all__ = ["collide"]
 
 
-@partial(jax.jit, static_argnums=(0,))
 def collide(
     lattice: Union[Lattice, CoupledLattices], state_dict: Dict[str, LBMState], fluid_state: Sequence[chex.array],
 ) -> Dict[str, LBMState]:

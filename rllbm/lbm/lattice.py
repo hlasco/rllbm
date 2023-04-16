@@ -5,7 +5,6 @@ from collections import namedtuple
 from collections.abc import Iterable
 from multipledispatch import dispatch
 
-from functools import partial
 from typing import TYPE_CHECKING, Sequence, Union, Dict
 
 import chex
@@ -41,7 +40,6 @@ class Lattice(abc.ABC):
                 f"'{type(self).__name__}' object has no attribute '{name}'"
             )
 
-    @partial(jax.jit, static_argnums=(0, 2))
     def get_moment(self, dist_function: chex.Array, order: int) -> chex.Array:
         return self.stencil.get_moment(
             dist_function=dist_function,
@@ -75,7 +73,6 @@ class FluidLattice(Lattice):
         return self.equilibrium(rho, u)
 
     @dispatch(jax.Array, jax.Array)
-    @partial(jax.jit, static_argnums=(0))
     def equilibrium(self, rho: chex.Array, u: chex.Array) -> chex.Array:
         u_norm2 = (
             jnp.linalg.norm(
@@ -117,29 +114,24 @@ class FluidLattice(Lattice):
         return df_eq
 
     @dispatch(Iterable)
-    @partial(jax.jit, static_argnums=(0))
     def equilibrium(self, fluid_state: Sequence[chex.Array]) -> chex.Array:
         return self.equilibrium(fluid_state.rho, fluid_state.u)
 
-    @partial(jax.jit, static_argnums=(0))
     def force(self):
         return 0.0
 
-    @partial(jax.jit, static_argnums=(0))
     def collision_terms(self, fluid_state) -> Sequence[chex.Array]:
         df_equilibrium = self.equilibrium(fluid_state.rho, fluid_state.u)
         df_force = self.force()
         return df_equilibrium, df_force
 
     @dispatch(jax.Array)
-    @partial(jax.jit, static_argnums=(0))
     def get_macroscopics(self, df: chex.Array) -> Sequence[chex.Array]:
         rho = self.get_moment(df, order=0)[..., jnp.newaxis]
         u = self.get_moment(df, order=1) / rho
         return self.Macroscopics(rho, u)
 
     @dispatch(dict)
-    @partial(jax.jit, static_argnums=(0))
     def get_macroscopics(self, state_dict: Dict[str, LBMState]) -> Sequence[chex.Array]:
         df = state_dict[self.name].df
         return self.get_macroscopics(df)
@@ -198,14 +190,12 @@ class ThermalFluidLattice(CoupledLattices):
         self.buoyancy = buoyancy
         super().__init__(coupled_lattice_dict)
 
-    @partial(jax.jit, static_argnums=(0))
     def initialize(
         self, rho: chex.Array, T: chex.Array, u: chex.Array
     ) -> Sequence[chex.Array]:
         return self.equilibrium(rho, T, u)
 
     @dispatch(jax.Array, jax.Array, jax.Array)
-    @partial(jax.jit, static_argnums=(0))
     def equilibrium(
         self, rho: chex.Array, T: chex.Array, u: chex.Array
     ) -> Sequence[chex.Array]:
@@ -228,11 +218,9 @@ class ThermalFluidLattice(CoupledLattices):
         return ret
 
     @dispatch(Iterable)
-    @partial(jax.jit, static_argnums=(0))
     def equilibrium(self, fluid_state) -> Sequence[chex.Array]:
         return self.equilibrium(fluid_state.rho, fluid_state.T, fluid_state.u)
 
-    @partial(jax.jit, static_argnums=(0))
     def force(
         self,
         rho: chex.Array,
@@ -267,7 +255,6 @@ class ThermalFluidLattice(CoupledLattices):
 
         return ret
 
-    @partial(jax.jit, static_argnums=(0))
     def collision_terms(self, fluid_state) -> Sequence:
         """Compute the collision terms for the coupled fluid and thermal lattices.
 
@@ -288,7 +275,6 @@ class ThermalFluidLattice(CoupledLattices):
 
         return equilibrium, force
 
-    @partial(jax.jit, static_argnums=(0))
     def get_macroscopics(self, state_dict: Dict[str, LBMState]) -> Sequence[chex.Array]:
         """Get the macroscopic quantities for the coupled NSE and ADE lattices.
 

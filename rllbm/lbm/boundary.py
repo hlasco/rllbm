@@ -4,11 +4,9 @@ import abc
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Dict, Union, Sequence, Any
 
-from functools import partial
 from multipledispatch import dispatch
 
 import chex
-import jax
 from jax import numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
@@ -25,7 +23,6 @@ __all__ = [
     "apply_boundary_conditions",
 ]
 
-@register_pytree_node_class
 class Boundary(abc.ABC):
     _name: str
     _mask: chex.Array
@@ -83,11 +80,10 @@ class Boundary(abc.ABC):
 
     def tree_flatten(self):
         # arrays / dynamic values
-        children = []
+        children = (self._mask,)
         # static values
         aux_data = {
             "name": self._name,
-            "mask": self._mask, 
             "_size": self._size,
         }
         return (children, aux_data)
@@ -95,8 +91,8 @@ class Boundary(abc.ABC):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         unflattened = cls(
+            mask=children[0],
             name=aux_data["name"],
-            mask=aux_data["mask"],
             _size=aux_data["_size"],
             _unflatten=True
         )
@@ -151,7 +147,6 @@ class BoundaryDict:
         for bdy in boundary:
             self.add(bdy)
 
-    @partial(jax.jit, static_argnums=(1))
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
         """Apply all the boundary conditions to the given distribution function.
 
@@ -187,19 +182,15 @@ class BoundaryDict:
         return self._stream_mask
 
     def tree_flatten(self):
-        children = (self._boundary_dict,)
-        aux_data = {
-            "stream_mask": self.stream_mask,
-            "collision_mask": self.collision_mask,
-        }
-        return (children, aux_data)
+        children = (self._boundary_dict, self.stream_mask, self.collision_mask)
+        return (children, {})
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         unflattened = cls()
         unflattened._boundary_dict = children[0]
-        unflattened._stream_mask = aux_data["stream_mask"]
-        unflattened._collision_mask = aux_data["collision_mask"]
+        unflattened._stream_mask = children[1]
+        unflattened._collision_mask = children[2]
         return unflattened
 
 
@@ -210,7 +201,6 @@ class BounceBackBoundary(Boundary):
     solid wall.
     """
 
-    @partial(jax.jit, static_argnums=(0, 1))
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
         """Apply the bounce back boundary condition to the given distribution function.
 
@@ -251,7 +241,6 @@ class InletBoundary(Boundary):
     m = 1.0
     u = jnp.array([0.0, 0.0])
 
-    @partial(jax.jit, static_argnums=(0, 1))
     def __call__(
         self,
         lattice: Lattice,
@@ -299,11 +288,10 @@ class InletBoundary(Boundary):
 
     def tree_flatten(self):
         # arrays / dynamic values
-        children = (self.m, self.u)
+        children = (self._mask, self.m, self.u)
         # static values
         aux_data = {
             "name": self._name,
-            "mask": self._mask, 
             "_size": self._size,
         }
         return (children, aux_data)
@@ -311,13 +299,13 @@ class InletBoundary(Boundary):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         unflattened = cls(
+            mask=children[0],
             name=aux_data["name"],
-            mask=aux_data["mask"],
             _size=aux_data["_size"],
             _unflatten=True
         )
-        unflattened.m = children[0]
-        unflattened.u = children[1]
+        unflattened.m = children[1]
+        unflattened.u = children[2]
         return unflattened
 
 @register_pytree_node_class
@@ -333,7 +321,6 @@ class OutletBoundary(Boundary):
             self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
         super().__init__(name, mask, _unflatten, _size)
 
-    @partial(jax.jit, static_argnums=(0, 1))
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
         """Apply the outlet boundary condition to the given distribution function.
         Args:
@@ -392,7 +379,6 @@ class OutletBoundary(Boundary):
         return unflattened
 
 
-@partial(jax.jit, static_argnums=(0))
 def apply_boundary_conditions(
     lattice: Union[Lattice, CoupledLattices],
     state_dict: Dict[str, LBMState],
