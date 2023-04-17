@@ -20,7 +20,8 @@ pip install .
 ## Usage
 
 The [examples](examples) folder contains sample codes to illustrate how to use this package:
-- [examples/cfd-rayleigh_benard](examples/cfd-rayleigh_benard) and [examples/cfd-von_karman](examples/cfd-von_karman) shows how to use the LBM simulation code on canonical problems (e.g. Von Karman vortex street, Rayleigh-Benard convection).
+- [examples/cfd-rayleigh_benard](examples/cfd-rayleigh_benard) and [examples/cfd-von_karman](examples/cfd-von_karman) shows how to use the LBM simulation code on canonical problems (e.g. Von Karman vortex street, Rayleigh-Benard convection)
+
 - [examples/rl-heat_wall](examples/rl-heat_wall) shows how to create a RL environment and train an agent with the Ray-Rllib library. In this example, the agent controls the boundary temperature of a closed domain, which triggers convective motions. The agent's goal is to drive a passive fluid particle towards a target location.
 
 **TODO**

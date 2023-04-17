@@ -1,5 +1,7 @@
 jaxlib
 jax
+chex
+multipledispatch
 torch
 ray[rllib]
 numpy
@@ -11,6 +13,8 @@ dask
 pytest
 bokeh
 holoviews
+datashader
+matplotlib
 panel
 moviepy
 wandb

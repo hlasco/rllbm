@@ -14,10 +14,11 @@ from rllbm.lbm import (
 )
 from rllbm.lbmenv import LBMEnv
 
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.colors import SymLogNorm
 from matplotlib.ticker import LogFormatter 
-
+matplotlib.use("Agg")
 
 __all__ = ["HeatWallEnv", "HeatWallEnvConfig"]
 
@@ -34,7 +35,7 @@ HeatWallEnvConfig = {
     "record_video_config":{
         "enabled": False,
         "fps": 20,
-        "directory": "./test_env",
+        "directory": ".",
     }
 }
 
@@ -250,14 +251,20 @@ def get_wall_temperature(x, bc_params):
 if __name__ == "__main__":
     import copy
     env_config = copy.copy(HeatWallEnvConfig)
-    env_config["record_video_config"]["enabled"] = False
+    env_config["record_video_config"]["enabled"] = True
+    env_config["run_time"] = 100
     env = HeatWallEnv(env_config)
 
     observation, info = env.reset()
     truncated = False
     terminated = False
     while not (truncated or terminated):
+        action = env.action_space.sample()
         observation, reward, terminated, truncated, info = env.step(
-            env.action_space.sample()
+            action
         )
+        print(f"Ran {env.sim_step}/{env.sim_steps} simulation steps")
+        print(f"obs: {observation}")
+        print(f"action: {action}")
+        print(f"reward: {reward}\n")
     env.close()
