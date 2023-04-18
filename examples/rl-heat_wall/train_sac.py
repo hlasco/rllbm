@@ -24,7 +24,7 @@ def make_env(cfg):
 def make_eval_env(cfg):
     eval_config = copy.deepcopy(cfg)
     eval_config["record_video_config"]["enabled"] = True
-    eval_config["record_video_config"]["video_directory"] = "./evaluation"
+    eval_config["record_video_config"]["directory"] = "./evaluation"
     env = make_env(eval_config)
     return env
 
@@ -87,7 +87,7 @@ config = (
     .framework('torch')
 
     .evaluation(
-        evaluation_interval=1,
+        evaluation_interval=40,
         evaluation_duration=1,
         evaluation_parallel_to_training=True,
         evaluation_num_workers=1,
@@ -112,9 +112,9 @@ tune.Tuner(
     "SAC",
     run_config=air.RunConfig(
         verbose=1,
-        stop={"num_env_steps_sampled": int(3.5e5)},
+        stop={"num_env_steps_sampled": int(1e6)},
         callbacks=[
-            WandbLoggerCallback(project="Thermal-Fluid-Control-v0"),
+            WandbLoggerCallback(project="Heat-Wall-v0"),
         ]
     ),
     param_space=config.to_dict(),

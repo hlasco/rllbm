@@ -29,8 +29,8 @@ HeatWallEnvConfig = {
     "temperature_amplitude": 1.0,
     "run_time": 500.0,
     "step_time": 1.0,
-    "prandtl": 0.71,
-    "rayleigh": 1e8,
+    "prandtl": 1.0,
+    "rayleigh": 5e7,
     "buoyancy": 0.001,
     "record_video_config":{
         "enabled": False,

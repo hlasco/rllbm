@@ -12,4 +12,4 @@
 eval "$(conda shell.bash hook)"
 conda activate rllbm
 
-python tfc_sac.py
+python train_sac.py
