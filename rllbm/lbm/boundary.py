@@ -28,13 +28,15 @@ class Boundary(abc.ABC):
     _mask: chex.Array
     _size: int
 
-    def __init__(self, name: str, mask: chex.Array, _unflatten: bool=False, _size: int=None) -> None:
+    def __init__(self, name: str, mask: chex.Array, _unflatten: bool=False, _size: int=None, _mask_id=None) -> None:
         self._name = name
         self._mask = mask
         if _unflatten:
             self._size = _size
+            self._mask_id = _mask_id
         else:
             self._size = jnp.sum(mask, dtype=jnp.int32)
+            self._mask_id = jnp.where(self._mask, size=self._size)
 
     def set_param(self, key: str, val: Any) -> None:
         if hasattr(self, key):
@@ -80,7 +82,7 @@ class Boundary(abc.ABC):
 
     def tree_flatten(self):
         # arrays / dynamic values
-        children = (self._mask,)
+        children = (self._mask, self._mask_id)
         # static values
         aux_data = {
             "name": self._name,
@@ -94,6 +96,7 @@ class Boundary(abc.ABC):
             mask=children[0],
             name=aux_data["name"],
             _size=aux_data["_size"],
+            _mask_id=children[1],
             _unflatten=True
         )
         return unflattened
@@ -212,14 +215,9 @@ class BounceBackBoundary(Boundary):
             Array: The distribution function after the application of the boundary
                 condition.
         """
-        for i in range(lattice.Q):
-            df = df.at[...,i].set(
-                jnp.where(
-                    self._mask,
-                    df[..., lattice.stencil.opposite[i]],
-                    df[..., i],
-                )
-            )
+        idx, idy = self._mask_id
+        bounced = df[:,:,lattice.stencil.opposite]
+        df = df.at[idx,idy,:].set(bounced[idx, idy, :])
         return df
 
     @property
@@ -260,20 +258,13 @@ class InletBoundary(Boundary):
         if isinstance(m, chex.Scalar):
             m = m * jnp.ones((self._size))
         m = m[..., jnp.newaxis]
-
+        
         if u.ndim == 1:
             u = jnp.ones((self._size, lattice.D)) * u[jnp.newaxis, :]
-
+        
         eq = lattice.equilibrium(m, u)
-
-        for i in range(lattice.Q):
-            df = df.at[...,i].set(
-                jnp.where(
-                    self._mask,
-                    eq[..., i],
-                    df[..., i],
-                )
-            )           
+        idx, idy = self._mask_id
+        df = df.at[idx,idy,:].set(eq)
         return df
 
     @property
@@ -288,7 +279,7 @@ class InletBoundary(Boundary):
 
     def tree_flatten(self):
         # arrays / dynamic values
-        children = (self._mask, self.m, self.u)
+        children = (self._mask, self._mask_id, self.m, self.u)
         # static values
         aux_data = {
             "name": self._name,
@@ -302,24 +293,25 @@ class InletBoundary(Boundary):
             mask=children[0],
             name=aux_data["name"],
             _size=aux_data["_size"],
+            _mask_id=children[1],
             _unflatten=True
         )
-        unflattened.m = children[1]
-        unflattened.u = children[2]
+        unflattened.m = children[2]
+        unflattened.u = children[3]
         return unflattened
 
 @register_pytree_node_class
 class OutletBoundary(Boundary):
     """An outlet boundary condition."""
 
-    def __init__(self, name, mask: chex.Array, direction: Sequence[int], _unflatten: bool=False, neighbor_mask=None, _size: int=None) -> None:
+    def __init__(self, name, mask: chex.Array, direction: Sequence[int], _unflatten: bool=False, _neigh_idx=None, _size: int=None, _mask_id=None) -> None:
         if _unflatten:
-            self.direction = direction
-            self.neighbor_mask = neighbor_mask
+            self._neigh_idx = _neigh_idx
         else:
-            self.direction = jnp.array(direction, dtype=jnp.int8)
-            self.neighbor_mask = jnp.roll(mask, shift=-self.direction, axis=(0, 1))
-        super().__init__(name, mask, _unflatten, _size)
+            direction = jnp.array(direction, dtype=jnp.int8)
+            self._neigh_idx = jnp.roll(mask, shift=-direction, axis=(0, 1))
+            self._neigh_idx = jnp.where(self._neigh_idx)
+        super().__init__(name, mask, _unflatten, _size, _mask_id)
 
     def __call__(self, lattice: Lattice, df: chex.Array) -> chex.Array:
         """Apply the outlet boundary condition to the given distribution function.
@@ -331,16 +323,13 @@ class OutletBoundary(Boundary):
             Array: The distribution function after the application of the boundary
                 condition.
         """
-        fluid_state = lattice.get_macroscopics(df[self.neighbor_mask, :])
+        # Equilibrium on neighbor lattice points
+        idx_n, idy_n = self._neigh_idx
+        fluid_state = lattice.get_macroscopics(df[idx_n, idy_n,:])
         eq = lattice.equilibrium(fluid_state)
-        for i in range(lattice.Q):
-            df = df.at[...,i].set(
-                jnp.where(
-                    self._mask,
-                    eq[..., i],
-                    df[..., i],
-                )
-            )
+
+        idx, idy = self._mask_id
+        df = df.at[idx,idy,:].set(eq)
         return df
 
     @property
@@ -355,13 +344,10 @@ class OutletBoundary(Boundary):
 
     def tree_flatten(self):
         # arrays / dynamic values
-        children = []
+        children = (self._mask, self._mask_id, self._neigh_idx)
         # static values
         aux_data = {
             "name": self._name,
-            "mask": self._mask, 
-            "direction": self.direction,
-            "neighbor_mask": self.neighbor_mask,
             "_size": self._size,
         }
         return (children, aux_data)
@@ -370,14 +356,14 @@ class OutletBoundary(Boundary):
     def tree_unflatten(cls, aux_data, children):
         unflattened = cls(
             name=aux_data["name"],
-            mask=aux_data["mask"],
-            direction=aux_data["direction"],
-            neighbor_mask=aux_data["neighbor_mask"],
+            mask=children[0],
+            direction=None,
+            _unflatten=True,
             _size=aux_data["_size"],
-            _unflatten=True
+            _mask_id=children[1],
+            _neigh_idx=children[2],
         )
         return unflattened
-
 
 def apply_boundary_conditions(
     lattice: Union[Lattice, CoupledLattices],
