@@ -1,7 +1,5 @@
 # Reinforcement Learning in Fluid Simulations with the LBM Method
 
-**This is still work in progress...**
-
 This project aims to provide reinforcement learning environments for controlling various aspects of CFD simulations. The goal is to test various control tasks for RL agents in CFD context, such as controlling a boundary condition, performing live data assimilation, or interacting with the solver core model to make, for example, a turbulence model. The CFD code is written in JAX for optimal performance.
 
 ## Introduction
@@ -28,15 +26,4 @@ https://user-images.githubusercontent.com/56357714/232616854-2fe2bad0-ec3d-4f01-
 
 
 https://user-images.githubusercontent.com/56357714/232616883-8a4d19c1-89bf-4009-ae36-b6afe125c72c.mp4
-
-
-**TODO**
-### Defining a LBM simulation
-#### `Simulation`
-#### `Lattice`
-#### `Stencil`
-#### The `stream` and `collide` function
-#### `CoupledLattices`
-#### `Boundary` and `BoundaryDict`
-### `LBMEnv`
 
